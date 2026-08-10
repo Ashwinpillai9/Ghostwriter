@@ -1,0 +1,98 @@
+# Ghostwriter configuration. Edit and restart (or press the reload item in the tray menu).
+
+[hotkeys]
+# Hold this chord to record; release to transcribe and paste. You press Enter yourself.
+push_to_talk = "ctrl+space"
+# Same as push_to_talk, but presses Enter automatically after pasting.
+# Empty = disabled. Set it to a chord (e.g. "ctrl+shift+space") if you ever want hands-free send.
+push_to_talk_send = ""
+# Press once to start, press again to stop. Hands-free long dictation.
+toggle = "ctrl+shift+d"
+# Cancel an in-progress recording without pasting anything.
+cancel = "esc"
+
+[wakeword]
+# Say the wake phrase to start dictating without touching the keyboard.
+enabled = true
+# Path to a custom openWakeWord model. Train one for "hey ghostwriter" with
+# scripts/train_wakeword.py (see README); until it exists, fallback_model is used.
+# The filename doubles as the phrase name shown in the UI, so keep it matching what you trained.
+model_path = "models/hey_ghostwriter.onnx"
+# Used when model_path is missing. Pretrained options: hey_jarvis, alexa, hey_mycroft,
+# hey_rhasspy, timer, weather.
+fallback_model = "hey_jarvis"
+# 0..1. Raise if it triggers on its own, lower if it misses you.
+threshold = 0.5
+# Ignore further detections for this long after one fires.
+cooldown_sec = 2.0
+
+[endpoint]
+# How a hands-free utterance ends. Only applies to wake-word dictation.
+# Stop after this much silence.
+silence_timeout_sec = 1.2
+# RMS below this counts as silence. Raise in a noisy room.
+silence_threshold = 0.012
+# Ignore blips shorter than this when deciding that speech has started.
+min_speech_sec = 0.4
+# If you never start talking after the wake word, give up after this long.
+lead_in_sec = 2.0
+# Hard cap on a single hands-free utterance.
+max_duration_sec = 60.0
+# Press this key to stop and transcribe immediately instead of waiting for silence.
+stop_key = "down"
+
+[model]
+# tiny.en | base.en | small.en | medium.en | distil-large-v3 | large-v3-turbo
+name = "large-v3-turbo"
+# "cuda" or "cpu". On RTX 50-series (Blackwell/sm_120) compute_type MUST be float16;
+# int8_float16 crashes cuBLAS with CUBLAS_STATUS_NOT_SUPPORTED.
+device = "cuda"
+compute_type = "float16"
+language = "en"
+# Words/phrases Whisper tends to get wrong. Fed in as an initial prompt.
+vocabulary = [
+    "Claude Code",
+    "Ghostwriter",
+    "ctranslate2",
+    "faster-whisper",
+    "uv",
+    "npm",
+    "git rebase",
+    "kubectl",
+    "async",
+    "repo",
+    "stdout",
+]
+
+[audio]
+sample_rate = 16000
+# Recordings shorter than this are discarded as accidental key taps.
+min_duration_sec = 0.35
+max_duration_sec = 300.0
+# Trim silence and skip non-speech chunks before decoding.
+vad = true
+# Optional: input device name substring, e.g. "Microphone (Realtek". Empty = system default.
+device = ""
+
+[output]
+# Paste via clipboard + Ctrl+V, then restore the previous clipboard contents.
+paste = true
+# Delay before restoring the old clipboard, in seconds. Raise if pastes come out empty.
+clipboard_restore_delay = 0.35
+# Play a short beep on record start / stop.
+sounds = true
+
+[postprocess]
+# Strip "um", "uh", "you know", etc.
+remove_fillers = true
+# Spoken punctuation and formatting commands: "new line", "comma", "open paren"...
+voice_commands = true
+# Capitalize the first letter and ensure trailing punctuation.
+tidy_sentences = true
+# Literal find/replace applied last. Great for CLI names Whisper mangles.
+[postprocess.replacements]
+"get hub" = "GitHub"
+"pie test" = "pytest"
+"pseudo" = "sudo"
+"see LI" = "CLI"
+"claw'd code" = "Claude Code"

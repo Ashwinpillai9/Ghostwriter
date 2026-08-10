@@ -1,0 +1,26 @@
+# openWakeWord training config for Ghostwriter.
+# Feed this to the automatic_model_training.ipynb Colab notebook.
+target_phrase:
+  - hey ghostwriter
+  - hey, ghostwriter
+  - hey ghost writer
+  - hey ghostwritr
+  - hey gostwriter
+model_name: hey_ghostwriter
+
+# Synthetic clips generated per phrase. More is better; these defaults train in about an hour.
+n_samples: 5000
+n_samples_val: 1000
+
+# Augmentation. Room impulse responses and background noise are what make the model robust
+# to your actual room rather than to clean TTS audio.
+augmentation_rounds: 1
+augmentation_batch_size: 16
+tts_batch_size: 50
+
+steps: 50000
+max_negative_weight: 1500
+target_accuracy: 0.7
+target_recall: 0.25
+
+output_dir: ./my_custom_model
