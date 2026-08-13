@@ -1,4 +1,8 @@
-"""Generates the openWakeWord training config for a custom "hey ghostwriter" model.
+"""Optional: generates the openWakeWord training config for a custom model.
+
+You do not need this. The default `whisper` wake-word backend answers to any phrase with
+nothing trained. Train an openWakeWord model only if you want that backend's lower CPU cost
+in a room where the microphone is rarely quiet.
 
 Training itself needs a GPU box with several GB of negative-audio datasets, so the practical
 path is the official Colab notebook. This script writes the config that notebook consumes and
@@ -48,10 +52,10 @@ output_dir: ./my_custom_model
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phrase", default="hey ghostwriter", help="wake phrase to train")
+    parser.add_argument("--phrase", default="hey ghost", help="wake phrase to train")
     parser.add_argument(
         "--output",
-        default="models/hey_ghostwriter.onnx",
+        default="models/hey_ghost.onnx",
         help="where the trained .onnx will live, relative to the project root",
     )
     args = parser.parse_args()
@@ -60,13 +64,8 @@ def main() -> int:
     # Spelling variants materially improve recall: the TTS voices stress "ghostwriter"
     # inconsistently, and training on one pronunciation makes the model brittle to the others.
     variants = [args.phrase]
-    if args.phrase == "hey ghostwriter":
-        variants += [
-            "hey, ghostwriter",
-            "hey ghost writer",
-            "hey ghostwritr",
-            "hey gostwriter",
-        ]
+    if args.phrase == "hey ghost":
+        variants += ["hey, ghost", "hey goast", "hey gost", "hey ghosts"]
 
     config = CONFIG_TEMPLATE.format(
         phrases="\n".join(f"  - {phrase}" for phrase in dict.fromkeys(variants)),
@@ -84,8 +83,9 @@ def main() -> int:
     print(f"  3. Upload {config_path.name} and point the notebook's config path at it.")
     print("  4. Run all cells. Expect roughly 1 hour, mostly dataset downloads.")
     print(f"  5. Download the resulting {model_name}.onnx into {ROOT / args.output}")
-    print("  6. Restart Ghostwriter. It picks the model up automatically.")
-    print("\nUntil then Ghostwriter uses the pretrained fallback set in config.toml.")
+    print(f"  6. In config.toml set backend = \"openwakeword\" and model_path = {args.output!r}.")
+    print("  7. Restart Ghostwriter.")
+    print("\nUntil then the whisper backend answers to the phrase with nothing trained.")
     return 0
 
 

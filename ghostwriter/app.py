@@ -20,6 +20,7 @@ from .hotkeys import HotkeyManager
 from .overlay import Overlay
 from .transcribe import Transcriber
 from .wakeword import WakeWordListener
+from .wakeword_whisper import WhisperWakeWordListener
 
 log = logging.getLogger("Ghostwriter")
 
@@ -59,9 +60,19 @@ class App:
             lead_in=self.cfg.get("endpoint.lead_in_sec", 2.0),
             max_duration=self.cfg.get("endpoint.max_duration_sec", 60.0),
         )
-        self.wake: WakeWordListener | None = None
-        if self.cfg.get("wakeword.enabled", True):
-            self.wake = WakeWordListener(
+        self.wake = self._build_wake() if self.cfg.get("wakeword.enabled", True) else None
+
+        self.hotkeys = HotkeyManager(
+            on_press=self.start_recording,
+            on_release=self.finish_recording,
+            on_toggle=self.handle_toggle,
+            on_cancel=self.cancel_recording,
+        )
+
+    def _build_wake(self):
+        """Pick the wake-word backend. The default needs no trained model."""
+        if self.cfg.get("wakeword.backend", "whisper") == "openwakeword":
+            return WakeWordListener(
                 on_detect=self.on_wake,
                 model_path=self.cfg.get("wakeword.model_path", ""),
                 fallback_model=self.cfg.get("wakeword.fallback_model", "hey_jarvis"),
@@ -69,12 +80,17 @@ class App:
                 cooldown_sec=self.cfg.get("wakeword.cooldown_sec", 2.0),
                 device=self.cfg.get("audio.device", ""),
             )
-
-        self.hotkeys = HotkeyManager(
-            on_press=self.start_recording,
-            on_release=self.finish_recording,
-            on_toggle=self.handle_toggle,
-            on_cancel=self.cancel_recording,
+        return WhisperWakeWordListener(
+            on_detect=self.on_wake,
+            phrase=self.cfg.get("wakeword.phrase", "hey ghost"),
+            aliases=self.cfg.get("wakeword.aliases", []),
+            model_name=self.cfg.get("wakeword.model", "tiny.en"),
+            device_type=self.cfg.get("wakeword.device", "cpu"),
+            compute_type=self.cfg.get("wakeword.compute_type", "int8"),
+            threshold=self.cfg.get("wakeword.threshold", 0.8),
+            vad_threshold=self.cfg.get("wakeword.vad_threshold", 0.5),
+            cooldown_sec=self.cfg.get("wakeword.cooldown_sec", 2.0),
+            device=self.cfg.get("audio.device", ""),
         )
 
     # --- model -----------------------------------------------------------
@@ -340,8 +356,8 @@ class App:
             )
             if self.wake.using_fallback:
                 lines.append(
-                    "  NOTE: custom wake word not trained yet - see README "
-                    "'Training the hey ghostwriter wake word'"
+                    "  NOTE: openWakeWord backend is using its pretrained fallback phrase - "
+                    "set wakeword.backend = \"whisper\" for the real phrase, no training needed"
                 )
         lines += [
             f"  {self.cfg.get('hotkeys.toggle')} toggles hands-free mode",

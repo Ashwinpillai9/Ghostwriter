@@ -1,12 +1,12 @@
 # openWakeWord training config for Ghostwriter.
 # Feed this to the automatic_model_training.ipynb Colab notebook.
 target_phrase:
-  - hey ghostwriter
-  - hey, ghostwriter
-  - hey ghost writer
-  - hey ghostwritr
-  - hey gostwriter
-model_name: hey_ghostwriter
+  - hey ghost
+  - hey, ghost
+  - hey goast
+  - hey gost
+  - hey ghosts
+model_name: hey_ghost
 
 # Synthetic clips generated per phrase. More is better; these defaults train in about an hour.
 n_samples: 5000

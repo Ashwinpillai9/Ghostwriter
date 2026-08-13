@@ -8,17 +8,24 @@ from typing import Any
 
 DEFAULTS: dict[str, Any] = {
     "hotkeys": {
-        "push_to_talk": "ctrl+shift+space",
-        "push_to_talk_send": "ctrl+shift+enter",
+        "push_to_talk": "right alt",
+        "push_to_talk_send": "",
         "toggle": "ctrl+shift+d",
         "cancel": "esc",
     },
     "wakeword": {
         "enabled": True,
-        "model_path": "models/hey_ghostwriter.onnx",
-        "fallback_model": "hey_jarvis",
-        "threshold": 0.5,
+        "backend": "whisper",
+        "phrase": "hey ghost",
+        "aliases": ["hey goast", "hey gost", "hey ghosts", "hey ghost writer"],
+        "threshold": 0.8,
+        "vad_threshold": 0.5,
+        "model": "tiny.en",
+        "device": "cpu",
+        "compute_type": "int8",
         "cooldown_sec": 2.0,
+        "model_path": "",
+        "fallback_model": "hey_jarvis",
     },
     "endpoint": {
         "silence_timeout_sec": 1.2,

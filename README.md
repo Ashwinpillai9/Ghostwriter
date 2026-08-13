@@ -33,16 +33,22 @@ A tray icon appears; the status pill shows above the taskbar while recording.
 
 | Hotkey | Action |
 | --- | --- |
-| Hold `Ctrl+Space` | Dictate, paste on release — review it, then press Enter yourself |
+| Hold `Right Alt` | Dictate, paste on release — review it, then press Enter yourself |
 | `Ctrl+Shift+D` | Toggle hands-free recording on/off |
 | `Esc` | Discard the recording in progress |
+
+Right Alt is the default because it is the one key on a PC keyboard that nothing else claims:
+no editor, shell or browser binds it, so holding it steals nothing. Left Alt is untouched —
+`Alt+Tab` and menu access keep working.
 
 All of these, plus the model and vocabulary, are configurable in `config.toml`.
 
 ## Wake word (hands-free)
 
-Listening is on by default. Say the wake phrase, talk, and stop — the transcript is pasted
-without you touching the keyboard. The utterance ends on whichever comes first:
+Say **"hey ghost"**, talk, and stop — the transcript is pasted without you touching the
+keyboard. It works on a fresh clone with nothing to train and nothing to configure.
+
+The utterance ends on whichever comes first:
 
 - **Silence** — `endpoint.silence_timeout_sec` (default 1.2s) of quiet.
 - **The stop key** — `Down` by default, when you want to cut it off immediately. This keeps
@@ -51,40 +57,50 @@ without you touching the keyboard. The utterance ends on whichever comes first:
 Say the wake word with nothing after it and the recording is dropped silently after
 `endpoint.lead_in_sec`.
 
-Detection runs an openWakeWord ONNX model on the CPU over 80 ms frames — the Whisper GPU
-model is only touched once the phrase fires, so idling costs almost nothing. The tray menu has
-a **Listening for "…"** checkbox to mute the mic listener instantly.
+The tray menu has a **Listening for "…"** checkbox to mute the mic listener instantly, and
+`wakeword.enabled = false` turns it off for good.
 
 Tuning knobs in `[endpoint]`: raise `silence_threshold` in a noisy room, raise
 `silence_timeout_sec` if it cuts you off while you think.
 
-### Training the "hey ghostwriter" wake word
+### How it detects the phrase without a trained model
 
-openWakeWord has no pretrained model for "hey ghostwriter", so until you train one Ghostwriter
-falls back to `wakeword.fallback_model` (`hey_jarvis` by default) and says so at startup. The
-training config already exists at `models/hey_ghostwriter_training.yaml`; regenerate it with
-`.venv\Scripts\python.exe scripts\train_wakeword.py` if you change the phrase.
+The usual approach — openWakeWord — needs a small ONNX classifier trained per phrase, on a GPU
+box with several GB of negative-audio datasets. There is no pretrained "hey ghost", so that
+route would leave everyone saying `hey jarvis` until they spent an hour in Colab.
 
-Training needs a GPU and several GB of negative-audio datasets, so use the free Colab notebook:
+The default `whisper` backend skips that entirely:
 
-1. Open [the openWakeWord training notebook][notebook].
-2. **Runtime > Change runtime type > T4 GPU.** The free tier is enough.
-3. Run the first setup cell, then restart the runtime if it asks.
-4. Upload `models/hey_ghostwriter_training.yaml` via the file pane on the left, and set the
-   notebook's config path to `./hey_ghostwriter_training.yaml`.
-5. **Runtime > Run all.** Budget about an hour — most of it is dataset downloads, not training.
-6. Download the resulting `hey_ghostwriter.onnx` from `my_custom_model/` in the file pane.
-7. Save it to `models\hey_ghostwriter.onnx` and restart Ghostwriter.
+1. **Silero VAD** watches the microphone. It is tiny, runs on the CPU, and already ships
+   inside `faster-whisper` — no extra dependency.
+2. When a burst of speech ends, that ~2.5s of audio goes to **`tiny.en`** (~75 MB, CPU, int8),
+   biased toward the phrase with an initial prompt.
+3. The transcript is matched against `wakeword.phrase` and `wakeword.aliases`, fuzzily, so
+   `"Hey, ghost."` and `"hey ghosts"` both count while `"the ghost writer branch"` does not.
 
-It is picked up automatically, with no config edit. You know it worked when the startup banner
-changes from `Say "hey jarvis"` to `Say "hey ghostwriter"`.
+The GPU dictation model is still only touched once the phrase fires. A plain loudness gate was
+the obvious cheaper choice and does not work: on a laptop mic array with automatic gain the
+idle noise floor alone reads as speech, so the decoder would never stop.
 
-If it mishears you afterwards, lower `wakeword.threshold` toward 0.35 before retraining — that
-costs nothing. If that isn't enough, retrain with `n_samples: 20000` and
-`augmentation_rounds: 2`.
+**Changing the phrase** is a one-line edit — set `wakeword.phrase` and restart. Nothing to
+train, nothing to download. Add spellings to `wakeword.aliases` if Whisper writes your phrase
+a way the fuzzy match misses; run `scripts\wakeword_test.py --phrase "…"` to see what it does.
 
-Any phrase works: `--phrase "hey scribe" --output models/hey_scribe.onnx`, then point
-`wakeword.model_path` at it. The filename is also what the UI calls the phrase.
+**Cost.** In a quiet room the decoder is idle. In a noisy one, or on a mic with aggressive
+auto-gain, it wakes at most once every 2s for about 180 ms of one core — roughly 9% of a
+single core, worst case. Raise `wakeword.vad_threshold` toward 0.8 to cut that down.
+
+### Optional: the openWakeWord backend
+
+If you would rather pay nothing at all in a permanently noisy room, train a classifier and set
+`wakeword.backend = "openwakeword"`. `scripts\train_wakeword.py` writes the training config
+(`models/hey_ghost_training.yaml`); training runs in [the official Colab notebook][notebook]
+on a free T4 in about an hour, mostly dataset downloads. Drop the resulting `.onnx` in
+`models\`, point `wakeword.model_path` at it, and set `wakeword.threshold` back to `0.5` —
+that key means "fuzzy match ratio" for the whisper backend and "model confidence" for this one.
+
+Without a model file this backend falls back to `wakeword.fallback_model` (`hey_jarvis`) and
+says so at startup.
 
 [notebook]: https://colab.research.google.com/github/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb
 
@@ -93,9 +109,13 @@ read it and hit Enter yourself. If you later want a hands-free "dictate and send
 `hotkeys.push_to_talk_send` to a chord (it is empty, and therefore disabled, by default).
 
 Hotkeys are matched exclusively: a chord like `Ctrl+Shift+Space` will not also fire a
-`Ctrl+Space` binding, even though `keyboard` on its own would let it. Note that `Ctrl+Space`
-is IntelliSense in VS Code and set-mark in readline-based shells — both are suppressed while
-Ghostwriter runs.
+`Ctrl+Space` binding, even though `keyboard` on its own would let it. Pick your binding with
+that in mind — `Ctrl+Space` is IntelliSense in VS Code and set-mark in readline-based shells,
+and a bound key is suppressed everywhere while Ghostwriter runs.
+
+Side-specific keys are bound by scan code rather than by name, because `keyboard` resolves the
+name `right alt` to *both* Alt keys; binding the name would swallow Left Alt and with it
+`Alt+Tab`. `right alt`, `left alt` and `altgr` are understood in `config.toml`.
 
 ## How text gets delivered
 
@@ -142,13 +162,15 @@ CUDA problems surface immediately rather than on your first dictation.
 ## Tests
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests -q     # rules, endpointing, wake-word flow
-.venv\Scripts\python.exe scripts\smoke_test.py  # model loads and decodes on GPU
-.venv\Scripts\python.exe scripts\tts_test.py    # end-to-end, no microphone needed
+.venv\Scripts\python.exe -m pytest tests -q        # rules, endpointing, hotkeys, wake word
+.venv\Scripts\python.exe scripts\smoke_test.py     # model loads and decodes on GPU
+.venv\Scripts\python.exe scripts\tts_test.py       # end-to-end, no microphone needed
+.venv\Scripts\python.exe scripts\wakeword_test.py  # the wake word actually fires, and only
 ```
 
 `tts_test.py` synthesizes a phrase with Windows SAPI and transcribes it, so you can verify
-the whole pipeline without speaking.
+the whole pipeline without speaking. `wakeword_test.py` does the same for the wake word: it
+speaks both phrases that should fire and phrases that should not, and reports each verdict.
 
 ## Autostart
 
@@ -163,8 +185,13 @@ you want it hidden.
   finishes are queued, not dropped.
 - **Wrong microphone.** Set `audio.device` to part of the device name. It applies to both the
   wake-word listener and the recorder.
-- **Wake word fires on its own.** Raise `wakeword.threshold` toward 0.7.
-- **Wake word never fires.** Lower it toward 0.35, and check the tray checkbox is on. Remember
-  you are saying the *fallback* phrase until you train the custom model.
+- **Right Alt does nothing.** Some laptops map it to AltGr, which reports as Ctrl+Alt; that is
+  handled. If your layout uses AltGr to type `@` or `€`, bind something else — a suppressed
+  Right Alt cannot also type characters.
+- **Wake word fires on its own.** Raise `wakeword.threshold` toward 0.9.
+- **Wake word never fires.** Lower it toward 0.7, and check the tray checkbox is on. Run
+  `scripts\wakeword_test.py` to see what the decoder actually hears.
+- **Wake word listener uses noticeable CPU.** Your mic is never quiet enough for the VAD to
+  close. Raise `wakeword.vad_threshold` toward 0.8.
 - **It cuts me off mid-sentence.** Raise `endpoint.silence_timeout_sec`, or raise
   `endpoint.silence_threshold` if room noise is masking your pauses.
