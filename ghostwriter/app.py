@@ -283,6 +283,7 @@ class App:
                 )
             )
         items += [
+            pystray.MenuItem("Move overlay", self.move_overlay),
             pystray.MenuItem("Open config.toml", self.open_config),
             pystray.MenuItem("Quit", self.quit),
         ]
@@ -316,6 +317,9 @@ class App:
         else:
             self.wake.start()
             self.overlay.set_state("done", f'Listening for "{self.wake_phrase()}"')
+
+    def move_overlay(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray signature
+        self.overlay.start_move()
 
     def open_config(self) -> None:
         import os

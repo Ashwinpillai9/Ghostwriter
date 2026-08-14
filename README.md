@@ -31,6 +31,11 @@ silently does nothing.
 
 A tray icon appears; the status pill shows above the taskbar while recording.
 
+**Moving the pill.** Drag it whenever it is visible. Since it hides itself when idle, the tray
+menu has a **Move overlay** item that brings it up on demand — drag it and let go. The position
+is remembered in `overlay_position.json` and clamped to the screen, so it cannot be dragged
+somewhere you can't reach it again.
+
 | Hotkey | Action |
 | --- | --- |
 | Hold `Right Alt` | Dictate, paste on release — review it, then press Enter yourself |
