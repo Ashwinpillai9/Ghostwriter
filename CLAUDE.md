@@ -53,7 +53,10 @@ hotkeys, the microphone or the overlay.
 - **Blur cost is priced by area.** The pill's chrome is rendered on a small tile and pasted in;
   blurring it across a larger surface cost ~44 ms a frame. Keep an eye on the frame budget when
   touching `pill.py`.
-- **Never draw full-screen in Pillow.** The activation wave is drawn into a 640px buffer and
+- **Overlay look and timing belong in `style.py`, not in constants.** `OverlayStyle`/`WaveStyle`
+  are built from `config.toml` and validated per key, so a typo warns once at startup instead
+  of raising inside the render loop. Add new knobs there rather than as module constants.
+- **Never draw full-screen in Pillow.** The activation wave is drawn into a 960px buffer and
   scaled up by GDI's `StretchBlt` (~0.9 ms). Doing the same work at display resolution in
   Python is ~119 ms a frame, and it blocks the Tk loop, so the drag and status updates freeze
   with it.

@@ -43,6 +43,25 @@ bloom and wave together. The design's palette is `#38bdf8` blue (the default), `
 `#22c55e` green and `#a855f7` purple. Only recording uses it — amber still means *working*,
 green *done* and red *failed*, so those keep their meaning.
 
+### Tuning it
+
+Every colour and timing lives in `config.toml`, so none of this needs a code edit:
+
+| Where | What |
+| --- | --- |
+| `[overlay]` | `accent`, `frame_ms` (16 ≈ 60fps), `activate_ms`, `rings_ms`, `hold_ms` |
+| `[overlay.colors]` | the per-state colours — `idle`, `transcribing`, `done`, `error`, `moving` |
+| `[overlay.wave]` | `enabled`, `crests`, `duration_ms`, `stagger_ms`, `intensity`, `falloff`, `band_steps`, `band_step_px`, `buffer_width`, `overshoot`, `start_radius`, `flash_ms`, `flash_rings`, `halos`, `cores` |
+
+The two you are most likely to reach for: **`intensity`** is peak brightness at the centre of a
+crest — past about `1.4` the crests clip and read as flat painted rings rather than light —
+and **`falloff`** decides how tightly that light concentrates into the core. **`buffer_width`**
+trades crispness against CPU, roughly linearly (960 ≈ 5 ms a frame, 1280 ≈ 7 ms), and
+`enabled = false` turns the wave off entirely while leaving the pill alone.
+
+Anything missing, mistyped or out of range logs one warning at startup and falls back to its
+default for that key alone — a bad colour never reaches the render loop.
+
 None of that is drawn by Tk. A Tk canvas has no antialiasing, no rounded window, no blur and
 no per-element opacity, so each frame is composed with Pillow in `ghostwriter/pill.py` and
 handed to Win32's `UpdateLayeredWindow`, which accepts a full alpha channel. Tk still owns the

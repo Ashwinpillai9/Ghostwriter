@@ -21,7 +21,6 @@ from pathlib import Path
 from . import win32
 from .pill import (
     BARS,
-    COLORS,
     HEIGHT,
     LABELS,
     PAD_X,
@@ -29,22 +28,16 @@ from .pill import (
     SURFACE_H,
     SURFACE_W,
     WIDTH,
-    DEFAULT_ACCENT,
     Frame,
     chrome,
-    rgb,
-    valid_accent,
 )
+from .style import OverlayStyle, rgb
 from .wave import ScreenWave
 
 log = logging.getLogger(__name__)
 
 BOTTOM_MARGIN = 120
 POSITION_FILE = Path(__file__).resolve().parent.parent / "overlay_position.json"
-
-FRAME_MS = 16  # ~60fps, so the activation morph is smooth.
-ACTIVATE_MS = 560.0  # Idle dot -> full waveform. The design's budget, matched exactly.
-RINGS_MS = 1200.0  # Expanding rings outlive the morph slightly.
 
 # Tk's winfo_screenwidth/height only ever describe the *primary* monitor, so clamping to them
 # pins the pill to one display. These report the whole virtual desktop instead.
@@ -61,9 +54,12 @@ def ease_out(progress: float) -> float:
 
 
 class Overlay:
-    def __init__(self, level_source: Callable[[], float], accent: str = DEFAULT_ACCENT):
+    def __init__(
+        self, level_source: Callable[[], float], style: OverlayStyle | None = None
+    ):
         self.level_source = level_source
-        self.accent = valid_accent(accent)
+        self.style = style or OverlayStyle()
+        self.accent = self.style.accent
         self.events: queue.Queue[tuple] = queue.Queue()
         self.state = "idle"
         self.message = ""
@@ -91,11 +87,13 @@ class Overlay:
         self._place()
         self._make_layered()
         try:
-            self.wave: ScreenWave | None = ScreenWave(self.root)
+            self.wave: ScreenWave | None = (
+                ScreenWave(self.root, self.style.wave) if self.style.wave.enabled else None
+            )
         except Exception:  # noqa: BLE001 - the pill is the feature; the wave is decoration
             log.warning("wave overlay unavailable", exc_info=True)
             self.wave = None
-        self._tick_id = self.root.after(FRAME_MS, self._tick)
+        self._tick_id = self.root.after(self.style.frame_ms, self._tick)
 
     # --- position --------------------------------------------------------
 
@@ -285,11 +283,11 @@ class Overlay:
         """
         # The design plays "activating" and then hands over to "recording". Here that is one
         # state: the first 560ms of recording *is* the morph, so nothing else has to know.
-        activating = state == "recording" and elapsed < ACTIVATE_MS
-        ease = ease_out(min(1.0, elapsed / ACTIVATE_MS))
+        activating = state == "recording" and elapsed < self.style.activate_ms
+        ease = ease_out(min(1.0, elapsed / self.style.activate_ms))
         # Recording (and the morph into it) wears the accent; the other states keep their own
         # meaning — amber is "working", green is "done", red is "failed".
-        color = self.accent if state == "recording" else COLORS.get(state, COLORS["idle"])
+        color = self.accent if state == "recording" else self.style.color_for(state)
 
         if activating:
             glow = 20 + ease * 40
@@ -313,10 +311,10 @@ class Overlay:
         """
         plan = []
         for state in ("recording", "transcribing", "done", "error", "moving"):
-            steps = int(ACTIVATE_MS / FRAME_MS) + 2 if state == "recording" else 1
+            steps = int(self.style.activate_ms / self.style.frame_ms) + 2 if state == "recording" else 1
             for step in range(steps):
-                _, glow, bloom, scale, _, _ = self._look(state, step * FRAME_MS)
-                color = self.accent if state == "recording" else COLORS[state]
+                _, glow, bloom, scale, _, _ = self._look(state, step * self.style.frame_ms)
+                color = self.accent if state == "recording" else self.style.color_for(state)
                 plan.append((color, round(glow), round(bloom * 100), round(scale * 1000)))
         return plan
 
@@ -346,7 +344,7 @@ class Overlay:
         color, glow, bloom, scale, orb, bars_opacity = self._look(state, elapsed)
 
         rings = []
-        if state == "recording" and elapsed < RINGS_MS:
+        if state == "recording" and elapsed < self.style.rings_ms:
             for index in range(3):
                 progress = (elapsed - index * 150) / 900
                 if 0 < progress < 1:
@@ -370,13 +368,13 @@ class Overlay:
         )
 
     def _animating(self) -> bool:
-        return self.state == "recording" or self._elapsed_ms() < RINGS_MS
+        return self.state == "recording" or self._elapsed_ms() < self.style.rings_ms
 
     # --- Tk loop ---------------------------------------------------------
 
     def _tick(self) -> None:
         self._tick_once()
-        self._tick_id = self.root.after(FRAME_MS, self._tick)
+        self._tick_id = self.root.after(self.style.frame_ms, self._tick)
 
     def _tick_once(self) -> None:
         """One frame of work. Split out from the scheduling so it can be driven in tests."""
@@ -408,7 +406,7 @@ class Overlay:
             if entering:
                 self._sync_wave(state)
             if state in ("done", "error"):
-                self.root.after(1400, lambda: self.set_state("idle"))
+                self.root.after(int(self.style.hold_ms), lambda: self.set_state("idle"))
 
         if self.wave is not None and self.wave.playing:
             self.wave.render(self._elapsed_ms())

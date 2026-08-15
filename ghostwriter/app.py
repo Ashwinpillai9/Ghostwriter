@@ -18,6 +18,7 @@ from .audio import Recorder
 from .endpoint import SilenceEndpointer
 from .hotkeys import HotkeyManager
 from .overlay import Overlay
+from .style import OverlayStyle
 from .transcribe import Transcriber
 from .wakeword import WakeWordListener
 from .wakeword_whisper import WhisperWakeWordListener
@@ -44,7 +45,7 @@ class App:
         )
         self.overlay = Overlay(
             level_source=lambda: self.recorder.level,
-            accent=self.cfg.get("overlay.accent", "#38bdf8"),
+            style=OverlayStyle.from_config(self.cfg),
         )
         self.jobs: queue.Queue[tuple[np.ndarray, str] | None] = queue.Queue()
         self.transcriber: Transcriber | None = None

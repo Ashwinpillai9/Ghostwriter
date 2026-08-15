@@ -40,21 +40,6 @@ CHROME_AT = (PAD_X - CHROME_MARGIN, PAD_Y - CHROME_MARGIN)
 
 BODY = (11, 15, 25, 235)  # rgba(11,15,25,0.92)
 TEXT = (229, 231, 235, 255)  # #e5e7eb
-IDLE_BORDER = (31, 41, 55, 255)  # #1f2937
-
-COLORS = {
-    "idle": "#6b7280",
-    "recording": "#ef4444",
-    "transcribing": "#f59e0b",
-    "done": "#22c55e",
-    "error": "#ef4444",
-    "moving": "#38bdf8",
-}
-
-# The accent replaces COLORS["recording"] and tints the bars, glow, border, bloom and wave
-# together — the design exposes it as a switchable prop with exactly these four choices.
-ACCENTS = ("#38bdf8", "#ef4444", "#22c55e", "#a855f7")
-DEFAULT_ACCENT = "#38bdf8"
 
 LABELS = {
     "transcribing": "Transcribing…",
@@ -62,19 +47,6 @@ LABELS = {
     "error": "Transcription failed",
     "moving": "Drag me, then let go",
 }
-
-
-def valid_accent(value) -> str:
-    """A usable "#rrggbb", or the default.
-
-    `rgb()` runs on every frame, so a typo in config.toml would otherwise raise forever inside
-    the render loop rather than once at startup.
-    """
-    try:
-        rgb(str(value))
-    except Exception:  # noqa: BLE001 - anything unparseable falls back
-        return DEFAULT_ACCENT
-    return str(value)
 
 
 def rgb(hex_color: str) -> tuple[int, int, int]:
@@ -160,7 +132,7 @@ def chrome(color: str, glow: int, bloom: int, scale: int) -> Image.Image:
     draw.rounded_rectangle(
         (left, top + 1, right, bottom), radius=radius, outline=(255, 255, 255, 13), width=1
     )
-    border = (*tint, 115) if color != COLORS["idle"] else IDLE_BORDER
+    border = (*tint, 115)
     draw.rounded_rectangle(box, radius=radius, outline=border, width=1)
 
     # Keep the bloom and the highlight inside the rounded shape.

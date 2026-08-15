@@ -22,70 +22,33 @@ import tkinter as tk
 from PIL import Image, ImageDraw
 
 from . import win32
+from .style import WaveStyle
 
 log = logging.getLogger(__name__)
 
-BUFFER_W = 960  # Height follows the monitor's aspect, so the scale stays uniform.
-CRESTS = 8
-DURATION_MS = 1700.0
-STAGGER_MS = 140.0
-END_MS = DURATION_MS + CRESTS * STAGGER_MS
-START_RADIUS = 20  # Buffer pixels. Crests are born just outside the pill.
-FLASH_MS = 420.0
-
-# Each crest is a bright core fading into a deep-blue halo. The falloff is drawn directly, as
-# concentric bands of decreasing alpha, rather than by blurring a hard band afterwards: a
-# Gaussian blur costs ~6.7ms because it is priced by *area*, which caps the buffer resolution,
-# while these bands cost perimeter and stay cheap however big the buffer gets. Drawing the
-# gradient also gives a cleaner core than smearing one, which is what makes it read as
-# luminous instead of smudged.
-BAND_STEPS = 14  # Bands either side of the crest line.
-BAND_STEP_PX = 4
-FALLOFF = 3.4  # Higher concentrates the light into the core.
-# Peak alpha at the crest line. Sampled off the reference, whose brightest ring pixels sit near
-# 50% over the desktop; pushing this to clipping turns the light into flat painted rings.
-INTENSITY = 1.15
-# Deep blues from the design's conic gradient, with brighter cores sampled off the reference.
-HALOS = [(12, 56, 232), (16, 68, 255), (36, 100, 255), (24, 82, 246)]
-CORES = [(150, 224, 255), (56, 189, 248), (110, 200, 255), (86, 205, 252)]
-
-# (offset from the crest line, weight) — precomputed once; the shape never changes. Sorted
-# dimmest-first so the bright core is painted last and nothing overwrites it.
-PROFILE = sorted(
-    (
-        (step * BAND_STEP_PX, math.exp(-((step / BAND_STEPS) ** 2) * FALLOFF))
-        for step in range(-BAND_STEPS, BAND_STEPS + 1)
-    ),
-    key=lambda band: band[1],
-)
-# The bloom under the pill as the wave departs, as filled ellipses fading outward — same
-# reason as the crests: no full-surface blur.
-FLASH_RINGS = 14
-
-
-def reach(center: tuple[float, float], size: tuple[float, float]) -> float:
+def reach(center: tuple[float, float], size: tuple[float, float], style: WaveStyle) -> float:
     """Distance to the farthest corner, so the last crest is still on screen as it leaves."""
     cx, cy = center
     width, height = size
-    return math.hypot(max(cx, width - cx), max(cy, height - cy)) + 40
+    return math.hypot(max(cx, width - cx), max(cy, height - cy)) + style.overshoot
 
 
-def crests(elapsed: float, center: tuple[float, float], size: tuple[float, float]):
+def crests(elapsed: float, center: tuple[float, float], size: tuple[float, float], style: WaveStyle):
     """The crest train at `elapsed` ms, as (radius_x, radius_y, opacity) in buffer pixels.
 
     Straight from the design: a surge-then-slack easing so the train reads as swell rather
     than as N concentric rings, with each crest breathing as it travels.
     """
-    limit = reach(center, size)
+    limit = reach(center, size, style)
     out = []
-    for index in range(CRESTS):
-        progress = (elapsed - index * STAGGER_MS) / DURATION_MS
+    for index in range(style.crests):
+        progress = (elapsed - index * style.stagger_ms) / style.duration_ms
         if not 0 < progress < 1:
             continue
         swell = (1 - (1 - progress) ** 1.5) * (1 - 0.1 * math.sin(progress * math.tau))
         # `limit` is the distance to the farthest corner, so it *is* the radius a crest needs
         # to clear the screen. Halving it here is what used to stop the wave halfway out.
-        radius = START_RADIUS + swell * (limit - START_RADIUS)
+        radius = style.start_radius + swell * (limit - style.start_radius)
         phase = elapsed / 190 + index * 1.1
         wobble = (1 - progress) * 0.22
         opacity = (
@@ -100,15 +63,18 @@ def crests(elapsed: float, center: tuple[float, float], size: tuple[float, float
     return out
 
 
-def flash_at(elapsed: float) -> float:
+def flash_at(elapsed: float, style: WaveStyle) -> float:
     """The bloom under the pill as the wave leaves it."""
-    return max(0.0, 0.26 * (1 - min(1.0, elapsed / FLASH_MS)) ** 2)
+    if style.flash_ms <= 0:
+        return 0.0
+    return max(0.0, 0.26 * (1 - min(1.0, elapsed / style.flash_ms)) ** 2)
 
 
 class ScreenWave:
     """A click-through, monitor-filling window that plays the wave and then hides."""
 
-    def __init__(self, parent: tk.Misc):
+    def __init__(self, parent: tk.Misc, style: WaveStyle | None = None):
+        self.style = style or WaveStyle()
         self.window = tk.Toplevel(parent)
         self.window.withdraw()
         self.window.overrideredirect(True)
@@ -138,9 +104,10 @@ class ScreenWave:
             return False
         if monitor != self._monitor:
             self._release()
-            buffer_h = max(1, round(BUFFER_W * height / width))
-            self._buffer_size = (BUFFER_W, buffer_h)
-            self._buffer = win32.Surface(BUFFER_W, buffer_h)
+            buffer_w = self.style.buffer_width
+            buffer_h = max(1, round(buffer_w * height / width))
+            self._buffer_size = (buffer_w, buffer_h)
+            self._buffer = win32.Surface(buffer_w, buffer_h)
             self._screen = win32.Surface(width, height)
             self._monitor = monitor
             self.window.geometry(f"{width}x{height}+{left}+{top}")
@@ -177,7 +144,7 @@ class ScreenWave:
         """Draw one frame. Caller drives the clock, so it shares the overlay's tick."""
         if not self.playing or self._buffer is None or self._screen is None:
             return
-        if elapsed >= END_MS:
+        if elapsed >= self.style.end_ms:
             self.stop()
             return
 
@@ -188,12 +155,13 @@ class ScreenWave:
 
         # The bloom goes down first: ImageDraw replaces pixels rather than blending them, so
         # drawing it afterwards would punch a hole through the crests leaving the pill.
-        flash = flash_at(elapsed)
+        flash = flash_at(elapsed, self.style)
         if flash > 0:
+            rings = self.style.flash_rings
             outer = size[0] * 0.22
-            for ring in range(FLASH_RINGS, 0, -1):
-                span = outer * ring / FLASH_RINGS
-                alpha = int(255 * flash * (1 - ring / FLASH_RINGS) ** 1.6 * 0.5)
+            for ring in range(rings, 0, -1):
+                span = outer * ring / rings
+                alpha = int(255 * flash * (1 - ring / rings) ** 1.6 * 0.5)
                 if alpha <= 0:
                     continue
                 draw.ellipse(
@@ -201,15 +169,15 @@ class ScreenWave:
                     fill=(*self._color, alpha),
                 )
 
-        train = crests(elapsed, self._center, size)
+        train = crests(elapsed, self._center, size, self.style)
         # Widest, dimmest bands first so the bright core lands on top of its own halo.
-        for offset, weight in PROFILE:
+        for offset, weight in self.style.profile:
             for index, (rx, ry, opacity) in enumerate(train):
-                alpha = int(255 * min(1.0, opacity * weight * INTENSITY))
+                alpha = int(255 * min(1.0, opacity * weight * self.style.intensity))
                 if alpha <= 0:
                     continue
-                halo = HALOS[index % len(HALOS)]
-                core = CORES[index % len(CORES)]
+                halo = self.style.halos[index % len(self.style.halos)]
+                core = self.style.cores[index % len(self.style.cores)]
                 tint = tuple(
                     int(halo[c] + (core[c] - halo[c]) * weight) for c in range(3)
                 )
@@ -217,7 +185,7 @@ class ScreenWave:
                 right, bottom = cx + rx + offset, cy + ry + offset
                 if right - left < 2 or bottom - top < 2:
                     continue
-                draw.ellipse((left, top, right, bottom), outline=(*tint, alpha), width=BAND_STEP_PX + 1)
+                draw.ellipse((left, top, right, bottom), outline=(*tint, alpha), width=self.style.band_step_px + 1)
 
         self._buffer.load(image)
         self._screen.stretch_from(self._buffer)

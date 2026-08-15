@@ -5,8 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from ghostwriter import overlay as overlay_module
-from ghostwriter import pill as pill_module
-from ghostwriter import wave as wave_module
 from ghostwriter.overlay import HEIGHT, WIDTH, Overlay
 
 tk = pytest.importorskip("tkinter")
@@ -143,15 +141,7 @@ def test_the_accent_colours_recording_and_leaves_the_other_states_alone(pill):
         assert pill.build_frame().color == expected
 
 
-@pytest.mark.parametrize("junk", ["", "not-a-colour", "#fff", None, 42, "#gggggg"])
-def test_a_junk_accent_falls_back_instead_of_breaking_every_frame(junk):
-    # rgb() runs per frame, so a typo in config.toml must not raise inside the render loop.
-    assert pill_module.valid_accent(junk) == pill_module.DEFAULT_ACCENT
 
-
-def test_a_real_accent_is_kept():
-    for accent in pill_module.ACCENTS:
-        assert pill_module.valid_accent(accent) == accent
 
 
 def test_the_wave_fills_whichever_monitor_the_pill_is_on(pill):
@@ -187,7 +177,7 @@ def test_the_wave_stops_itself_when_the_animation_expires(pill):
     if pill.wave is None:
         pytest.skip("no wave overlay")
     pill._sync_wave("recording")
-    pill.wave.render(wave_module.END_MS + 1)
+    pill.wave.render(pill.style.wave.end_ms + 1)
     assert not pill.wave.playing, "a wave left playing would sit on screen forever"
 
 

@@ -101,9 +101,55 @@ device = ""
 
 [overlay]
 # Colour of the recording pill: the waveform bars, the glow, the border and the wave that
-# sweeps the screen. Only recording uses it — amber still means transcribing, green pasted,
-# red failed. Design palette: "#38bdf8" blue, "#ef4444" red, "#22c55e" green, "#a855f7" purple.
+# sweeps the screen. Only recording uses it — the states below keep their own meaning.
+# Design palette: "#38bdf8" blue, "#ef4444" red, "#22c55e" green, "#a855f7" purple.
 accent = "#38bdf8"
+# Frame interval in ms. 16 is ~60fps. Raise it if the animation costs you too much CPU.
+frame_ms = 16
+# How long the idle dot takes to bloom and stretch into the waveform.
+activate_ms = 560
+# How long the rings hugging the pill keep expanding.
+rings_ms = 1200
+# How long "Pasted" and error messages stay up before the pill hides itself.
+hold_ms = 1400
+
+[overlay.colors]
+# Per-state colours. Recording is not here: it wears `accent`.
+idle = "#6b7280"
+transcribing = "#f59e0b"
+done = "#22c55e"
+error = "#ef4444"
+moving = "#38bdf8"
+
+[overlay.wave]
+# The wave that sweeps the whole display when recording starts.
+enabled = true
+# How many crests are in the train, and how far apart they set off.
+crests = 8
+duration_ms = 1700
+stagger_ms = 140
+# Where a crest is born, and how far past the farthest corner it travels before expiring.
+# Raise overshoot if the wave seems to stop before the screen edge.
+start_radius = 20
+overshoot = 40
+# The bloom left under the pill as the wave departs. flash_ms = 0 turns it off.
+flash_ms = 420
+flash_rings = 14
+# Width of the buffer the wave is drawn into before it is scaled to your display. Bigger is
+# crisper and costs more, roughly linearly: 960 measures ~5ms a frame, 1280 ~7ms.
+buffer_width = 960
+# Each crest's glow is drawn as bands stepping outward from its centre line. More/wider bands
+# make a broader, softer glow.
+band_steps = 14
+band_step_px = 4
+# Higher concentrates the light into a tighter core.
+falloff = 3.4
+# Peak alpha at the centre of a crest. Past about 1.4 the crests clip to flat painted rings
+# instead of reading as light.
+intensity = 1.15
+# Crest colours, cycled through the train: deep halo, bright core.
+halos = ["#0c38e8", "#1044ff", "#2464ff", "#1852f6"]
+cores = ["#96e0ff", "#38bdf8", "#6ec8ff", "#56cdfc"]
 
 [output]
 # Paste via clipboard + Ctrl+V, then restore the previous clipboard contents.
