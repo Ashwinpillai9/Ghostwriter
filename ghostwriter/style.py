@@ -86,9 +86,9 @@ class WaveStyle:
     """The activation wave that sweeps the display."""
 
     enabled: bool = True
-    crests: int = 8
+    crests: int = 6
     duration_ms: float = 1700.0
-    stagger_ms: float = 140.0
+    stagger_ms: float = 200.0
     start_radius: int = 20
     overshoot: int = 40  # How far past the farthest corner a crest travels before expiring.
     flash_ms: float = 420.0
@@ -96,10 +96,12 @@ class WaveStyle:
     # Buffer the wave is drawn into before GDI scales it to the display. Bigger is crisper and
     # costs more; the cost is roughly linear in the pixel count.
     buffer_width: int = 960
-    band_steps: int = 14  # Bands either side of the crest line, forming its falloff.
-    band_step_px: int = 4
-    falloff: float = 3.4  # Higher concentrates the light into the core.
-    intensity: float = 1.15  # Peak alpha at the crest line. Past ~1.4 it clips to flat rings.
+    band_steps: int = 8  # Bands either side of the crest line, forming its falloff.
+    band_step_px: int = 3
+    falloff: float = 4.2  # Higher concentrates the light into the core.
+    # Peak alpha at the crest line. Kept well under 1 so the crests stay as light passing over
+    # the desktop, with dark space between them, rather than covering it.
+    intensity: float = 0.72
     halos: tuple[tuple[int, int, int], ...] = field(
         default_factory=lambda: tuple(rgb(c) for c in DEFAULT_HALOS)
     )

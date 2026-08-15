@@ -70,6 +70,53 @@ def flash_at(elapsed: float, style: WaveStyle) -> float:
     return max(0.0, 0.26 * (1 - min(1.0, elapsed / style.flash_ms)) ** 2)
 
 
+def draw_frame(
+    elapsed: float,
+    center: tuple[float, float],
+    size: tuple[int, int],
+    style: WaveStyle,
+    color: tuple[int, int, int],
+) -> Image.Image:
+    """One buffer-sized frame of the wave. Pure, so it can be previewed and tested offline."""
+    image = Image.new("RGBA", size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    cx, cy = center
+
+    # The bloom goes down first: ImageDraw replaces pixels rather than blending them, so
+    # drawing it afterwards would punch a hole through the crests leaving the pill.
+    flash = flash_at(elapsed, style)
+    if flash > 0:
+        rings = style.flash_rings
+        outer = size[0] * 0.22
+        for ring in range(rings, 0, -1):
+            span = outer * ring / rings
+            alpha = int(255 * flash * (1 - ring / rings) ** 1.6 * 0.5)
+            if alpha > 0:
+                draw.ellipse(
+                    (cx - span, cy - span * 0.62, cx + span, cy + span * 0.62),
+                    fill=(*color, alpha),
+                )
+
+    train = crests(elapsed, center, size, style)
+    # Widest, dimmest bands first so the bright core lands on top of its own halo.
+    for offset, weight in style.profile:
+        for index, (rx, ry, opacity) in enumerate(train):
+            alpha = int(255 * min(1.0, opacity * weight * style.intensity))
+            if alpha <= 0:
+                continue
+            halo = style.halos[index % len(style.halos)]
+            core = style.cores[index % len(style.cores)]
+            tint = tuple(int(halo[c] + (core[c] - halo[c]) * weight) for c in range(3))
+            left, top = cx - rx - offset, cy - ry - offset
+            right, bottom = cx + rx + offset, cy + ry + offset
+            if right - left < 2 or bottom - top < 2:
+                continue
+            draw.ellipse(
+                (left, top, right, bottom), outline=(*tint, alpha), width=style.band_step_px + 1
+            )
+    return image
+
+
 class ScreenWave:
     """A click-through, monitor-filling window that plays the wave and then hides."""
 
@@ -148,45 +195,7 @@ class ScreenWave:
             self.stop()
             return
 
-        size = self._buffer_size
-        image = Image.new("RGBA", size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
-        cx, cy = self._center
-
-        # The bloom goes down first: ImageDraw replaces pixels rather than blending them, so
-        # drawing it afterwards would punch a hole through the crests leaving the pill.
-        flash = flash_at(elapsed, self.style)
-        if flash > 0:
-            rings = self.style.flash_rings
-            outer = size[0] * 0.22
-            for ring in range(rings, 0, -1):
-                span = outer * ring / rings
-                alpha = int(255 * flash * (1 - ring / rings) ** 1.6 * 0.5)
-                if alpha <= 0:
-                    continue
-                draw.ellipse(
-                    (cx - span, cy - span * 0.62, cx + span, cy + span * 0.62),
-                    fill=(*self._color, alpha),
-                )
-
-        train = crests(elapsed, self._center, size, self.style)
-        # Widest, dimmest bands first so the bright core lands on top of its own halo.
-        for offset, weight in self.style.profile:
-            for index, (rx, ry, opacity) in enumerate(train):
-                alpha = int(255 * min(1.0, opacity * weight * self.style.intensity))
-                if alpha <= 0:
-                    continue
-                halo = self.style.halos[index % len(self.style.halos)]
-                core = self.style.cores[index % len(self.style.cores)]
-                tint = tuple(
-                    int(halo[c] + (core[c] - halo[c]) * weight) for c in range(3)
-                )
-                left, top = cx - rx - offset, cy - ry - offset
-                right, bottom = cx + rx + offset, cy + ry + offset
-                if right - left < 2 or bottom - top < 2:
-                    continue
-                draw.ellipse((left, top, right, bottom), outline=(*tint, alpha), width=self.style.band_step_px + 1)
-
+        image = draw_frame(elapsed, self._center, self._buffer_size, self.style, self._color)
         self._buffer.load(image)
         self._screen.stretch_from(self._buffer)
         self._screen.push(self._hwnd)

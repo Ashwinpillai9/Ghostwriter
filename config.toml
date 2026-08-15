@@ -125,9 +125,9 @@ moving = "#38bdf8"
 # The wave that sweeps the whole display when recording starts.
 enabled = true
 # How many crests are in the train, and how far apart they set off.
-crests = 8
+crests = 6
 duration_ms = 1700
-stagger_ms = 140
+stagger_ms = 200
 # Where a crest is born, and how far past the farthest corner it travels before expiring.
 # Raise overshoot if the wave seems to stop before the screen edge.
 start_radius = 20
@@ -139,14 +139,14 @@ flash_rings = 14
 # crisper and costs more, roughly linearly: 960 measures ~5ms a frame, 1280 ~7ms.
 buffer_width = 960
 # Each crest's glow is drawn as bands stepping outward from its centre line. More/wider bands
-# make a broader, softer glow.
-band_steps = 14
-band_step_px = 4
+# make a broader, softer glow — and less dark space between one crest and the next.
+band_steps = 8
+band_step_px = 3
 # Higher concentrates the light into a tighter core.
-falloff = 3.4
-# Peak alpha at the centre of a crest. Past about 1.4 the crests clip to flat painted rings
-# instead of reading as light.
-intensity = 1.15
+falloff = 4.2
+# Peak alpha at the centre of a crest. Raise for a bolder wave; past about 1.4 the crests clip
+# and read as flat painted rings instead of light.
+intensity = 0.72
 # Crest colours, cycled through the train: deep halo, bright core.
 halos = ["#0c38e8", "#1044ff", "#2464ff", "#1852f6"]
 cores = ["#96e0ff", "#38bdf8", "#6ec8ff", "#56cdfc"]
