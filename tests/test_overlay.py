@@ -48,9 +48,38 @@ def test_the_position_survives_a_restart(pill):
 
 def test_a_drag_off_screen_is_clamped_back(pill):
     drag(pill, (0, 0), (99999, 99999))
-    max_x = pill.root.winfo_screenwidth() - WIDTH
-    max_y = pill.root.winfo_screenheight() - HEIGHT
-    assert pill.position == (max_x, max_y)
+    left, top, right, bottom = pill._virtual_bounds()
+    x, y = pill.position
+    assert left <= x <= right - WIDTH
+    assert top <= y <= bottom - HEIGHT
+
+
+def test_the_clamp_covers_every_monitor_not_just_the_primary(pill):
+    left, top, right, _bottom = pill._virtual_bounds()
+    if right - left <= pill.root.winfo_screenwidth():
+        pytest.skip("single monitor")
+
+    # Aim at the far edge of the virtual desktop rather than "just past the primary's width":
+    # a DPI-scaled primary leaves a gap between the monitors that no cursor can occupy.
+    drag(pill, (0, 0), (right - 20, top + 310))
+    x, _y = pill.position
+    assert x > pill.root.winfo_screenwidth(), (
+        "the pill must be able to live on a second monitor, not just the primary"
+    )
+    assert pill._work_area(*pill.position) != pill._work_area(0, 0)
+
+
+def test_a_clamped_position_lands_on_a_real_monitor(pill):
+    # Monitors of different sizes leave gaps in the virtual rectangle; the pill must not sit
+    # in one. _work_area resolves the nearest monitor, so the position it returns is on-screen.
+    drag(pill, (0, 0), (99999, 99999))
+    area = pill._work_area(*pill.position)
+    if area is None:
+        pytest.skip("no monitor API")
+    left, top, right, bottom = area
+    x, y = pill.position
+    assert left <= x <= right - WIDTH
+    assert top <= y <= bottom - HEIGHT
 
 
 def test_a_corrupt_position_file_falls_back_to_the_default_spot(pill):

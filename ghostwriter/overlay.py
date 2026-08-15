@@ -32,6 +32,36 @@ _GWL_EXSTYLE = -20
 _WS_EX_NOACTIVATE = 0x08000000
 _WS_EX_TOOLWINDOW = 0x00000080
 
+# Tk's winfo_screenwidth/height only ever describe the *primary* monitor, so clamping to them
+# pins the pill to one display. These report the whole virtual desktop instead.
+_SM_XVIRTUALSCREEN = 76
+_SM_YVIRTUALSCREEN = 77
+_SM_CXVIRTUALSCREEN = 78
+_SM_CYVIRTUALSCREEN = 79
+_MONITOR_DEFAULTTONEAREST = 2
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("rcMonitor", _RECT),
+        ("rcWork", _RECT),
+        ("dwFlags", ctypes.c_ulong),
+    ]
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
 
 class Overlay:
     def __init__(self, level_source: Callable[[], float]):
@@ -81,11 +111,61 @@ class Overlay:
         x, y = self.position
         self.root.geometry(f"{WIDTH}x{HEIGHT}+{x}+{y}")
 
+    def _virtual_bounds(self) -> tuple[int, int, int, int]:
+        """The whole virtual desktop as (left, top, right, bottom).
+
+        The origin is negative when a monitor sits left of or above the primary one, so this
+        cannot be simplified to a width and a height.
+        """
+        try:
+            metrics = ctypes.windll.user32.GetSystemMetrics
+            left = metrics(_SM_XVIRTUALSCREEN)
+            top = metrics(_SM_YVIRTUALSCREEN)
+            width = metrics(_SM_CXVIRTUALSCREEN)
+            height = metrics(_SM_CYVIRTUALSCREEN)
+            if width > 0 and height > 0:
+                return left, top, left + width, top + height
+        except Exception:  # noqa: BLE001 - not Windows, or the call is unavailable
+            pass
+        return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def _work_area(self, x: int, y: int) -> tuple[int, int, int, int] | None:
+        """The usable area of the monitor nearest the pill's centre, excluding the taskbar."""
+        try:
+            user32 = ctypes.windll.user32
+            point = _POINT(int(x + WIDTH / 2), int(y + HEIGHT / 2))
+            handle = user32.MonitorFromPoint(point, _MONITOR_DEFAULTTONEAREST)
+            if not handle:
+                return None
+            info = _MONITORINFO()
+            info.cbSize = ctypes.sizeof(_MONITORINFO)
+            if not user32.GetMonitorInfoW(handle, ctypes.byref(info)):
+                return None
+            work = info.rcWork
+            return work.left, work.top, work.right, work.bottom
+        except Exception:  # noqa: BLE001 - not Windows, or the call is unavailable
+            return None
+
     def _clamp(self, x: int, y: int) -> tuple[int, int]:
-        """Keep the pill reachable; a window dragged off-screen cannot be dragged back."""
-        max_x = self.root.winfo_screenwidth() - WIDTH
-        max_y = self.root.winfo_screenheight() - HEIGHT
-        return max(0, min(x, max_x)), max(0, min(y, max_y))
+        """Keep the pill reachable; a window dragged off-screen cannot be dragged back.
+
+        Clamping happens against the monitor the pill is nearest, not the primary one, so it
+        can be parked on any display. The virtual-desktop pass first is what makes the nearest
+        monitor meaningful for a position flung far past every edge.
+        """
+        left, top, right, bottom = self._virtual_bounds()
+        x = max(left, min(x, right - WIDTH))
+        y = max(top, min(y, bottom - HEIGHT))
+
+        area = self._work_area(x, y)
+        if area is None:
+            return x, y
+        # Monitors of different heights leave gaps in the virtual rectangle; snapping into the
+        # nearest monitor's work area keeps the pill out of them, and off the taskbar.
+        left, top, right, bottom = area
+        x = max(left, min(x, right - WIDTH))
+        y = max(top, min(y, bottom - HEIGHT))
+        return x, y
 
     def _load_position(self) -> tuple[int, int] | None:
         try:
