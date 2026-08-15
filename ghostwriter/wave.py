@@ -1,15 +1,18 @@
-"""The activation wave: a bioluminescent train that rolls from the pill to the screen edges.
+"""The activation ripple: a droplet landing on the display and spreading to its edges.
+
+Modelled as a real travelling wave rather than as expanding rings — see `ripples()` for why
+that distinction is the whole difference between "water" and "concentric circles".
 
 Drawing this at display resolution in Pillow costs ~119ms a frame. Drawing it into a small
-buffer and letting GDI's StretchBlt scale it across the display costs ~5ms, because the
+buffer and letting GDI's StretchBlt scale it across the display costs ~3ms, because the
 expensive part was never the pixels — it was doing per-pixel work in Python.
 
 Nothing here is blurred. A Gaussian blur is priced by area, so it cost ~6.7ms whatever the
-radius and put a hard ceiling on the buffer resolution; the crests draw their own falloff as
-concentric bands instead, which is priced by perimeter. That bought a bigger buffer, a cleaner
-core, and a cheaper frame all at once.
+radius and put a hard ceiling on the buffer resolution. Sampling the wave radially and drawing
+one thin ring per sample is priced by perimeter instead, which bought a bigger buffer and a
+cheaper frame at once — and it is the only way to draw a waveform rather than a shape.
 
-The window is click-through and covers one whole monitor, so the wave sweeps over other
+The window is click-through and covers one whole monitor, so the ripple sweeps over other
 applications without interrupting anything you are doing.
 """
 
@@ -33,33 +36,55 @@ def reach(center: tuple[float, float], size: tuple[float, float], style: WaveSty
     return math.hypot(max(cx, width - cx), max(cy, height - cy)) + style.overshoot
 
 
-def crests(elapsed: float, center: tuple[float, float], size: tuple[float, float], style: WaveStyle):
-    """The crest train at `elapsed` ms, as (radius_x, radius_y, opacity) in buffer pixels.
+def ripples(
+    elapsed: float, center: tuple[float, float], size: tuple[float, float], style: WaveStyle
+):
+    """The ripple train at `elapsed` ms, sampled radially.
 
-    Straight from the design: a surge-then-slack easing so the train reads as swell rather
-    than as N concentric rings, with each crest breathing as it travels.
+    Returns (radius_x, radius_y, intensity) per sampled radius, in buffer pixels.
+
+    This is a travelling wave, not a set of expanding rings. A droplet puts a packet of energy
+    into the surface at one point; the crests inside it stay a fixed wavelength apart and all
+    move outward together at one speed, so what you see spreading is the *packet*, with the
+    individual crests marching through it. Rings that each expand on their own easing curve
+    bunch up as they decelerate and read as concentric circles, which is what this replaces.
+
+    Amplitude falls as the ring grows — the same energy spread around an ever-longer
+    circumference — and the whole disturbance fades over the animation's life.
     """
     limit = reach(center, size, style)
+    lead = style.start_radius + style.speed(limit) * elapsed
+    if lead <= style.start_radius:
+        return []
+
+    # The train lengthens as it travels: the slower waves fall behind the fast leading edge.
+    packet = style.packet_px * (0.55 + 0.45 * min(1.0, elapsed / style.duration_ms))
+    life = max(0.0, 1 - elapsed / style.end_ms) ** 0.65
+    if life <= 0:
+        return []
+
     out = []
-    for index in range(style.crests):
-        progress = (elapsed - index * style.stagger_ms) / style.duration_ms
-        if not 0 < progress < 1:
+    first = max(style.start_radius, lead - packet)
+    steps = int((min(lead, limit) - first) / style.sample_px)
+    for step in range(max(0, steps) + 1):
+        radius = first + step * style.sample_px
+        depth = (lead - radius) / packet  # 0 at the leading edge, 1 at the tail
+        if not 0 <= depth <= 1:
             continue
-        swell = (1 - (1 - progress) ** 1.5) * (1 - 0.1 * math.sin(progress * math.tau))
-        # `limit` is the distance to the farthest corner, so it *is* the radius a crest needs
-        # to clear the screen. Halving it here is what used to stop the wave halfway out.
-        radius = style.start_radius + swell * (limit - style.start_radius)
-        phase = elapsed / 190 + index * 1.1
-        wobble = (1 - progress) * 0.22
-        opacity = (
-            min(1.0, progress * 7)
-            # Fades gently rather than steeply, so a crest still reads as light when it
-            # arrives at the edge instead of dying in the middle of the screen.
-            * (1 - progress) ** 0.5
-            * (0.6 + 0.4 * abs(math.sin(phase * 0.5)))
-            * (1.0 if index < 3 else 0.75)
-        )
-        out.append((radius, radius * (1 - wobble * 0.55 * math.sin(phase)), opacity))
+        # Crests sit a fixed wavelength apart behind the leading edge. Only the positive lobe
+        # is lit, so the troughs between them stay dark.
+        lobe = math.cos(math.tau * (lead - radius) / style.wavelength)
+        if lobe <= 0:
+            continue
+        # A soft nose stops the front of the packet arriving as a hard edge.
+        nose = min(1.0, depth / 0.06)
+        spread = 1 / math.sqrt(1 + radius / (limit * style.damping))
+        intensity = life * nose * (1 - depth) ** 1.1 * spread * lobe**style.sharpness
+        if intensity <= 0.004:
+            continue
+        # A touch of squash so the ring is not a perfect circle frame after frame.
+        wobble = 1 - 0.03 * math.sin(radius / 90 + elapsed / 400)
+        out.append((radius, radius * wobble, intensity))
     return out
 
 
@@ -97,23 +122,22 @@ def draw_frame(
                     fill=(*color, alpha),
                 )
 
-    train = crests(elapsed, center, size, style)
-    # Widest, dimmest bands first so the bright core lands on top of its own halo.
-    for offset, weight in style.profile:
-        for index, (rx, ry, opacity) in enumerate(train):
-            alpha = int(255 * min(1.0, opacity * weight * style.intensity))
-            if alpha <= 0:
-                continue
-            halo = style.halos[index % len(style.halos)]
-            core = style.cores[index % len(style.cores)]
-            tint = tuple(int(halo[c] + (core[c] - halo[c]) * weight) for c in range(3))
-            left, top = cx - rx - offset, cy - ry - offset
-            right, bottom = cx + rx + offset, cy + ry + offset
-            if right - left < 2 or bottom - top < 2:
-                continue
-            draw.ellipse(
-                (left, top, right, bottom), outline=(*tint, alpha), width=style.band_step_px + 1
-            )
+    # Dimmest first, so the bright centre of a crest is painted over its own shoulders.
+    for rx, ry, intensity in sorted(ripples(elapsed, center, size, style), key=lambda r: r[2]):
+        alpha = int(255 * min(1.0, intensity * style.intensity))
+        if alpha <= 0:
+            continue
+        # The brightest part of a crest is near-white; its shoulders sink into deep blue.
+        halo, core = style.halos[0], style.cores[0]
+        lit = min(1.0, intensity * 1.6)
+        tint = tuple(int(halo[c] + (core[c] - halo[c]) * lit) for c in range(3))
+        if rx < 2 or ry < 2:
+            continue
+        draw.ellipse(
+            (cx - rx, cy - ry, cx + rx, cy + ry),
+            outline=(*tint, alpha),
+            width=style.sample_px + 1,
+        )
     return image
 
 

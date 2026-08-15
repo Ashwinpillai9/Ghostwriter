@@ -35,7 +35,7 @@ A tray icon appears; the status pill shows above the taskbar while recording.
 
 A 260×46 rounded pill that glows in the colour of whatever it is doing: blue recording, amber
 transcribing, green pasted, red failed. Starting a recording plays a half-second activation —
-the idle dot blooms, stretches into the 21-bar waveform, and a wave rolls out across the
+the idle dot blooms, stretches into the 21-bar waveform, and a ripple spreads across the
 display behind it.
 
 The recording colour is `overlay.accent` in `config.toml`, and it tints the bars, glow, border,
@@ -51,13 +51,13 @@ Every colour and timing lives in `config.toml`, so none of this needs a code edi
 | --- | --- |
 | `[overlay]` | `accent`, `frame_ms` (16 ≈ 60fps), `activate_ms`, `rings_ms`, `hold_ms` |
 | `[overlay.colors]` | the per-state colours — `idle`, `transcribing`, `done`, `error`, `moving` |
-| `[overlay.wave]` | `enabled`, `crests`, `duration_ms`, `stagger_ms`, `intensity`, `falloff`, `band_steps`, `band_step_px`, `buffer_width`, `overshoot`, `start_radius`, `flash_ms`, `flash_rings`, `halos`, `cores` |
+| `[overlay.wave]` | `enabled`, `duration_ms`, `wavelength`, `packet_px`, `speed_scale`, `sample_px`, `damping`, `sharpness`, `intensity`, `buffer_width`, `overshoot`, `start_radius`, `flash_ms`, `flash_rings`, `halos`, `cores` |
 
-The two you are most likely to reach for: **`intensity`** is peak brightness at the centre of a
-crest — past about `1.4` the crests clip and read as flat painted rings rather than light —
-and **`falloff`** decides how tightly that light concentrates into the core. **`buffer_width`**
-trades crispness against CPU, roughly linearly (960 ≈ 5 ms a frame, 1280 ≈ 7 ms), and
-`enabled = false` turns the wave off entirely while leaving the pill alone.
+The ones you are most likely to reach for: **`wavelength`** is the distance between one lit
+crest and the next, **`packet_px`** is how many crests are travelling at once, **`intensity`**
+is peak crest brightness, and **`sharpness`** trades crest width against the dark water around
+it. **`buffer_width`** trades crispness against CPU, roughly linearly, and `enabled = false`
+turns the ripple off entirely while leaving the pill alone.
 
 Anything missing, mistyped or out of range logs one warning at startup and falls back to its
 default for that key alone — a bad colour never reaches the render loop.
@@ -68,9 +68,12 @@ handed to Win32's `UpdateLayeredWindow`, which accepts a full alpha channel. Tk 
 window, the event loop and the input handling. Transparent pixels are click-through, so the
 padding that gives the glow room never swallows a click meant for the window behind it.
 
-**The activation wave** fills whichever display the pill is on. It is a second, click-through
-window covering that monitor, so the crests sweep over your other applications without
-interrupting anything — they cannot receive a click at all.
+**The activation ripple** spreads across whichever display the pill is on, like a droplet
+landing on water: crests a fixed wavelength apart, all travelling outward together at one
+speed, with dark water between them and the amplitude falling away as the rings grow.
+
+It lives in a second, click-through window covering that monitor, so the crests sweep over your
+other applications without interrupting anything — they cannot receive a click at all.
 
 Drawing it at display resolution in Pillow costs ~119 ms a frame (8fps). The trick is that the
 expensive part was never the pixels, it was doing per-pixel work in Python: the wave is drawn
@@ -78,9 +81,12 @@ into a 960px-wide buffer and GDI's `StretchBlt` scales it across the display for
 the fullscreen `UpdateLayeredWindow` costing another ~0.8 ms.
 
 Nothing is blurred, either. A Gaussian blur is priced by area — ~6.7 ms whatever the radius —
-which capped the buffer resolution; each crest draws its own falloff as concentric bands, which
-is priced by perimeter. A whole frame, pill and wave together, measures ~9 ms against the 16 ms
-a 60fps budget allows. The pill's cached chrome is built a frame at a time while it sits idle,
+which capped the buffer resolution. Sampling the wave radially and drawing one thin ring per
+sample is priced by perimeter, and it is also the only way to draw a *waveform* rather than a
+shape: the crest spacing, the troughs and the decay all come out of the sampled profile.
+
+A whole frame, pill and ripple together, measures ~9 ms against the 16 ms a 60fps budget
+allows. The pill's cached chrome is built a frame at a time while it sits idle,
 so the first activation animates as smoothly as the tenth.
 
 **Moving the pill.** Drag it whenever it is visible. Since it hides itself when idle, the tray

@@ -86,9 +86,24 @@ class WaveStyle:
     """The activation wave that sweeps the display."""
 
     enabled: bool = True
-    crests: int = 6
     duration_ms: float = 1700.0
-    stagger_ms: float = 200.0
+    # Crest spacing, in buffer pixels. This is the wavelength of the ripple: the distance from
+    # one lit crest to the next, and it stays constant as the train travels, which is what
+    # makes it read as water rather than as expanding rings.
+    wavelength: float = 62.0
+    # How long the train of crests is behind its leading edge. Longer means more crests at
+    # once; it also stretches as the wave travels, as the slower waves fall behind.
+    packet_px: float = 300.0
+    # Where the leading edge is by `duration_ms`, as a multiple of the distance it needs to
+    # clear the screen. At 1.0 the front reaches the far corner exactly as time runs out and
+    # the trailing crests keep crossing after it; much above that and the wave is gone early.
+    speed_scale: float = 1.0
+    # Radial sampling step. Smaller is smoother and costs more, linearly.
+    sample_px: int = 3
+    # How quickly a crest dims as its ring grows. Lower fades faster toward the edges.
+    damping: float = 0.55
+    # Crest sharpness. Higher gives a narrow bright line with more dark water around it.
+    sharpness: float = 1.8
     start_radius: int = 20
     overshoot: int = 40  # How far past the farthest corner a crest travels before expiring.
     flash_ms: float = 420.0
@@ -96,12 +111,9 @@ class WaveStyle:
     # Buffer the wave is drawn into before GDI scales it to the display. Bigger is crisper and
     # costs more; the cost is roughly linear in the pixel count.
     buffer_width: int = 960
-    band_steps: int = 8  # Bands either side of the crest line, forming its falloff.
-    band_step_px: int = 3
-    falloff: float = 4.2  # Higher concentrates the light into the core.
     # Peak alpha at the crest line. Kept well under 1 so the crests stay as light passing over
-    # the desktop, with dark space between them, rather than covering it.
-    intensity: float = 0.72
+    # the desktop, with dark water between them, rather than covering it.
+    intensity: float = 1.1
     halos: tuple[tuple[int, int, int], ...] = field(
         default_factory=lambda: tuple(rgb(c) for c in DEFAULT_HALOS)
     )
@@ -110,16 +122,13 @@ class WaveStyle:
     )
 
     def __post_init__(self) -> None:
-        self.end_ms = self.duration_ms + self.crests * self.stagger_ms
-        # (offset from the crest line, weight), dimmest first so the bright core is painted
-        # last and nothing overwrites it.
-        self.profile = sorted(
-            (
-                (step * self.band_step_px, math.exp(-((step / self.band_steps) ** 2) * self.falloff))
-                for step in range(-self.band_steps, self.band_steps + 1)
-            ),
-            key=lambda band: band[1],
-        )
+        # The tail of the train is still travelling after the leading edge has gone; give it
+        # the time it needs to leave rather than cutting it off mid-screen.
+        self.end_ms = self.duration_ms * 1.3
+
+    def speed(self, limit: float) -> float:
+        """Leading-edge speed in buffer pixels per ms, for a screen needing `limit` reach."""
+        return limit * self.speed_scale / self.duration_ms
 
     @classmethod
     def from_config(cls, cfg) -> "WaveStyle":
@@ -127,12 +136,24 @@ class WaveStyle:
         default = cls()
         return cls(
             enabled=_flag(cfg.get(f"{at}.enabled"), default.enabled, f"{at}.enabled"),
-            crests=_number(cfg.get(f"{at}.crests"), default.crests, 1, 24, f"{at}.crests", True),
             duration_ms=_number(
                 cfg.get(f"{at}.duration_ms"), default.duration_ms, 100, 10000, f"{at}.duration_ms"
             ),
-            stagger_ms=_number(
-                cfg.get(f"{at}.stagger_ms"), default.stagger_ms, 0, 2000, f"{at}.stagger_ms"
+            wavelength=_number(
+                cfg.get(f"{at}.wavelength"), default.wavelength, 6, 600, f"{at}.wavelength"
+            ),
+            packet_px=_number(
+                cfg.get(f"{at}.packet_px"), default.packet_px, 20, 4000, f"{at}.packet_px"
+            ),
+            speed_scale=_number(
+                cfg.get(f"{at}.speed_scale"), default.speed_scale, 0.2, 6, f"{at}.speed_scale"
+            ),
+            sample_px=_number(
+                cfg.get(f"{at}.sample_px"), default.sample_px, 1, 24, f"{at}.sample_px", True
+            ),
+            damping=_number(cfg.get(f"{at}.damping"), default.damping, 0.02, 20, f"{at}.damping"),
+            sharpness=_number(
+                cfg.get(f"{at}.sharpness"), default.sharpness, 0.2, 12, f"{at}.sharpness"
             ),
             start_radius=_number(
                 cfg.get(f"{at}.start_radius"), default.start_radius, 0, 400, f"{at}.start_radius", True
@@ -147,13 +168,6 @@ class WaveStyle:
             buffer_width=_number(
                 cfg.get(f"{at}.buffer_width"), default.buffer_width, 160, 2560, f"{at}.buffer_width", True
             ),
-            band_steps=_number(
-                cfg.get(f"{at}.band_steps"), default.band_steps, 1, 64, f"{at}.band_steps", True
-            ),
-            band_step_px=_number(
-                cfg.get(f"{at}.band_step_px"), default.band_step_px, 1, 32, f"{at}.band_step_px", True
-            ),
-            falloff=_number(cfg.get(f"{at}.falloff"), default.falloff, 0.1, 20, f"{at}.falloff"),
             intensity=_number(
                 cfg.get(f"{at}.intensity"), default.intensity, 0, 4, f"{at}.intensity"
             ),

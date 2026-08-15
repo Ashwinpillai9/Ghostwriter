@@ -27,12 +27,12 @@ def test_values_come_through():
         accent="#a855f7",
         frame_ms=33,
         colors={"done": "#00ff00"},
-        wave={"crests": 3, "intensity": 0.5, "cores": ["#112233", "#445566"]},
+        wave={"wavelength": 40, "intensity": 0.5, "cores": ["#112233", "#445566"]},
     )
     assert built.accent == "#a855f7"
     assert built.frame_ms == 33
     assert built.colors["done"] == "#00ff00"
-    assert built.wave.crests == 3
+    assert built.wave.wavelength == 40
     assert built.wave.intensity == 0.5
     assert built.wave.cores == ((17, 34, 51), (68, 85, 102))
 
@@ -50,13 +50,16 @@ def test_a_junk_accent_falls_back(junk):
 @pytest.mark.parametrize(
     ("key", "junk"),
     [
-        ("crests", "eight"),
-        ("crests", 0),  # below the floor
-        ("crests", 9999),  # above the ceiling
+        ("wavelength", "sixty"),
+        ("wavelength", 0),  # below the floor
+        ("wavelength", 9999),  # above the ceiling
+        ("packet_px", "long"),
+        ("sharpness", -2),
+        ("damping", 0),
         ("intensity", -1),
         ("intensity", None),
         ("buffer_width", 4),
-        ("falloff", "wide"),
+        ("speed_scale", "fast"),
         ("enabled", "yes"),  # a string is not a bool
     ],
 )
@@ -78,18 +81,12 @@ def test_an_empty_colour_list_falls_back_rather_than_drawing_nothing():
 
 
 def test_derived_values_track_the_configured_ones():
-    built = style(wave={"crests": 4, "duration_ms": 1000, "stagger_ms": 100})
-    assert built.wave.end_ms == 1000 + 4 * 100
-    # The falloff profile has to be rebuilt too, not left on the default shape.
-    built = style(wave={"band_steps": 3, "band_step_px": 5})
-    assert len(built.wave.profile) == 7
-    assert max(abs(offset) for offset, _ in built.wave.profile) == 15
-
-
-def test_the_profile_is_ordered_dimmest_first():
-    # The bright core must be painted last or the halo overwrites it.
-    weights = [weight for _offset, weight in WaveStyle().profile]
-    assert weights == sorted(weights)
+    # end_ms and the crest speed are computed from duration_ms, so a configured duration has
+    # to carry through to both or the wave gets cut off mid-screen.
+    built = style(wave={"duration_ms": 1000})
+    assert built.wave.end_ms == pytest.approx(1300)
+    assert built.wave.speed(500) == pytest.approx(0.5)
+    assert style(wave={"speed_scale": 2.0}).wave.speed(500) > built.wave.speed(500)
 
 
 def test_recording_wears_the_accent_and_other_states_do_not():

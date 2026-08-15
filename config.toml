@@ -122,32 +122,38 @@ error = "#ef4444"
 moving = "#38bdf8"
 
 [overlay.wave]
-# The wave that sweeps the whole display when recording starts.
+# The ripple that spreads across the display when recording starts, like a droplet landing on
+# water: crests a fixed wavelength apart, all travelling outward together, dark water between.
 enabled = true
-# How many crests are in the train, and how far apart they set off.
-crests = 6
+# How long the leading crest takes to cross the display.
 duration_ms = 1700
-stagger_ms = 200
-# Where a crest is born, and how far past the farthest corner it travels before expiring.
-# Raise overshoot if the wave seems to stop before the screen edge.
+# Distance from one lit crest to the next, in buffer pixels (see buffer_width). Smaller packs
+# more ripples in; larger spreads them out.
+wavelength = 62
+# How long the train of crests is behind its leading edge. Longer shows more crests at once.
+packet_px = 300
+# Where the leading crest is when duration_ms runs out, relative to the far corner of the
+# screen. 1.0 means it arrives exactly on time; higher sends the wave off-screen early.
+speed_scale = 1.0
+# Radial sampling step in buffer pixels. Smaller is smoother and costs more, linearly.
+sample_px = 3
+# How fast a crest dims as its ring grows. Lower fades the wave out sooner.
+damping = 0.55
+# Crest sharpness. Higher gives a narrower, brighter line with more dark water around it.
+sharpness = 1.8
+# Where the ripple is born, and how far past the far corner it runs before it is dropped.
 start_radius = 20
 overshoot = 40
 # The bloom left under the pill as the wave departs. flash_ms = 0 turns it off.
 flash_ms = 420
 flash_rings = 14
 # Width of the buffer the wave is drawn into before it is scaled to your display. Bigger is
-# crisper and costs more, roughly linearly: 960 measures ~5ms a frame, 1280 ~7ms.
+# crisper and costs more, roughly linearly.
 buffer_width = 960
-# Each crest's glow is drawn as bands stepping outward from its centre line. More/wider bands
-# make a broader, softer glow — and less dark space between one crest and the next.
-band_steps = 8
-band_step_px = 3
-# Higher concentrates the light into a tighter core.
-falloff = 4.2
-# Peak alpha at the centre of a crest. Raise for a bolder wave; past about 1.4 the crests clip
-# and read as flat painted rings instead of light.
-intensity = 0.72
-# Crest colours, cycled through the train: deep halo, bright core.
+# Peak brightness of a crest. Raise for a bolder wave; too high and the crests stop reading as
+# light on water and start covering what is underneath.
+intensity = 1.1
+# Crest colours: the deep water a crest sits in, and the lit edge of the crest itself.
 halos = ["#0c38e8", "#1044ff", "#2464ff", "#1852f6"]
 cores = ["#96e0ff", "#38bdf8", "#6ec8ff", "#56cdfc"]
 
