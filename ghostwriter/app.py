@@ -63,6 +63,9 @@ class App:
             min_speech=self.cfg.get("endpoint.min_speech_sec", 0.4),
             lead_in=self.cfg.get("endpoint.lead_in_sec", 2.0),
             max_duration=self.cfg.get("endpoint.max_duration_sec", 60.0),
+            audio_source=self.recorder.recent,
+            vad_threshold=self.cfg.get("endpoint.vad_threshold", 0.5),
+            sample_rate=self.cfg.get("audio.sample_rate", 16000),
         )
         self.wake = self._build_wake() if self.cfg.get("wakeword.enabled", True) else None
 
@@ -198,7 +201,9 @@ class App:
         if not key or self._stop_key_handle is not None:
             return
         try:
-            self._stop_key_handle = keyboard.add_hotkey(key, self._stop_now, suppress=True)
+            # Not suppressed: this key is bound for the whole utterance, and swallowing it
+            # system-wide for that long is indistinguishable from a broken keyboard.
+            self._stop_key_handle = keyboard.add_hotkey(key, self._stop_now)
         except Exception:  # noqa: BLE001 - a bad key name shouldn't break dictation
             log.exception("could not bind stop key %r", key)
 

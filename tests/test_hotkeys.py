@@ -49,3 +49,36 @@ def test_extra_modifier_rejects_the_narrower_chord(monkeypatch):
     monkeypatch.setattr(hotkeys.keyboard, "is_pressed", fake_pressed({"ctrl", "shift", "space"}))
     assert not hotkeys.exclusively_pressed("ctrl+space")
     assert hotkeys.exclusively_pressed("ctrl+shift+space")
+
+
+class FakeKeyboard:
+    """Records how each binding was registered."""
+
+    def __init__(self):
+        self.calls = []
+
+    def add_hotkey(self, chord, callback, suppress=False):  # noqa: ARG002 - keyboard's API
+        self.calls.append((chord, suppress))
+        return object()
+
+    def remove_hotkey(self, handle):
+        pass
+
+
+def register_with(monkeypatch, **config):
+    fake = FakeKeyboard()
+    monkeypatch.setattr(hotkeys, "keyboard", fake)
+    manager = hotkeys.HotkeyManager(lambda m: None, lambda m: None, lambda: None, lambda: None)
+    manager.register({"push_to_talk": "right alt", "toggle": "ctrl+shift+d", **config})
+    return fake
+
+
+def test_bindings_are_suppressed_by_default(monkeypatch):
+    assert all(suppress for _chord, suppress in register_with(monkeypatch).calls)
+
+
+def test_suppression_can_be_turned_off(monkeypatch):
+    # A suppressed key is invisible to every other program for as long as Ghostwriter runs, so
+    # there has to be a way to hand it back without unbinding it.
+    fake = register_with(monkeypatch, suppress=False)
+    assert not any(suppress for _chord, suppress in fake.calls)

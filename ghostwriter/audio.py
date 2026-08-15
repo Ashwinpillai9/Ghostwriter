@@ -79,3 +79,22 @@ class Recorder:
     def duration(self) -> float:
         with self._lock:
             return self._frames / self.sample_rate
+
+    def recent(self, samples: int) -> np.ndarray:
+        """The last `samples` frames captured so far, for anything watching the audio live.
+
+        Returns fewer than asked for early in a recording, and an empty array before one
+        starts. Copies, so the caller can hold it while recording continues.
+        """
+        with self._lock:
+            if not self._chunks:
+                return np.zeros(0, dtype=np.float32)
+            tail: list[np.ndarray] = []
+            have = 0
+            for chunk in reversed(self._chunks):
+                tail.append(chunk)
+                have += len(chunk)
+                if have >= samples:
+                    break
+        audio = np.concatenate(list(reversed(tail))).astype(np.float32)
+        return audio[-samples:] if len(audio) > samples else audio

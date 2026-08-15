@@ -12,6 +12,7 @@ DEFAULTS: dict[str, Any] = {
         "push_to_talk_send": "",
         "toggle": "ctrl+shift+d",
         "cancel": "esc",
+        "suppress": True,
     },
     "wakeword": {
         "enabled": True,
@@ -34,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
         "lead_in_sec": 2.0,
         "max_duration_sec": 60.0,
         "stop_key": "down",
+        "vad_threshold": 0.5,
     },
     "model": {
         "name": "large-v3-turbo",
