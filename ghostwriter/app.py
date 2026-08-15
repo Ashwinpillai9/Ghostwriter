@@ -63,6 +63,7 @@ class App:
             min_speech=self.cfg.get("endpoint.min_speech_sec", 0.4),
             lead_in=self.cfg.get("endpoint.lead_in_sec", 2.0),
             max_duration=self.cfg.get("endpoint.max_duration_sec", 60.0),
+            min_recording=self.cfg.get("endpoint.min_recording_sec", 4.0),
             audio_source=self.recorder.recent,
             vad_threshold=self.cfg.get("endpoint.vad_threshold", 0.5),
             sample_rate=self.cfg.get("audio.sample_rate", 16000),

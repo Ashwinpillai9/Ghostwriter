@@ -34,6 +34,7 @@ DEFAULTS: dict[str, Any] = {
         "min_speech_sec": 0.4,
         "lead_in_sec": 2.0,
         "max_duration_sec": 60.0,
+        "min_recording_sec": 4.0,
         "stop_key": "down",
         "vad_threshold": 0.5,
     },

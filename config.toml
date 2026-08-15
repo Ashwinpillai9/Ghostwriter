@@ -70,6 +70,10 @@ silence_threshold = 0.012
 min_speech_sec = 0.4
 # If you never start talking after the wake word, give up after this long.
 lead_in_sec = 2.0
+# Once you've started talking, keep recording for at least this long before a pause is allowed
+# to end it — a pause to think early in a long thought won't cut it short. Doesn't delay
+# no_speech (saying nothing at all) or the stop key, only the silence-based ending.
+min_recording_sec = 4.0
 # Hard cap on a single hands-free utterance.
 max_duration_sec = 60.0
 # Press this key to stop and transcribe immediately instead of waiting for silence.
