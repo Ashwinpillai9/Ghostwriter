@@ -42,7 +42,10 @@ class App:
             device=self.cfg.get("audio.device", ""),
             max_seconds=self.cfg.get("audio.max_duration_sec", 300.0),
         )
-        self.overlay = Overlay(level_source=lambda: self.recorder.level)
+        self.overlay = Overlay(
+            level_source=lambda: self.recorder.level,
+            accent=self.cfg.get("overlay.accent", "#38bdf8"),
+        )
         self.jobs: queue.Queue[tuple[np.ndarray, str] | None] = queue.Queue()
         self.transcriber: Transcriber | None = None
         self.model_ready = threading.Event()

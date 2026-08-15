@@ -5,21 +5,44 @@ from types import SimpleNamespace
 import pytest
 
 from ghostwriter import overlay as overlay_module
+from ghostwriter import pill as pill_module
+from ghostwriter import wave as wave_module
 from ghostwriter.overlay import HEIGHT, WIDTH, Overlay
 
 tk = pytest.importorskip("tkinter")
 
 
-@pytest.fixture
-def pill(monkeypatch, tmp_path):
-    monkeypatch.setattr(overlay_module, "POSITION_FILE", tmp_path / "overlay_position.json")
+@pytest.fixture(scope="module")
+def _overlay():
+    """One Overlay for the whole module.
+
+    Building a Tk root re-sources the entire Tcl library from disk, and on this machine those
+    reads intermittently fail under antivirus interception ("couldn't read file … No error").
+    One root per test turned that into a flaky suite; one per module makes it rare and the run
+    faster. The per-test fixture below resets the state a fresh instance would have had.
+    """
     try:
         widget = Overlay(level_source=lambda: 0.0)
-    except tk.TclError:  # pragma: no cover - no window station available
-        pytest.skip("no display")
+    except tk.TclError as exc:  # pragma: no cover - no window station, or Tcl unreadable
+        pytest.skip(f"no display: {exc}")
     widget.root.update_idletasks()
     yield widget
+    widget.shutdown()
     widget.root.destroy()
+
+
+@pytest.fixture
+def pill(_overlay, monkeypatch, tmp_path):
+    monkeypatch.setattr(overlay_module, "POSITION_FILE", tmp_path / "overlay_position.json")
+    _overlay.state = "idle"
+    _overlay.message = ""
+    _overlay.moving = False
+    _overlay._drag_offset = None
+    _overlay._dragged = False
+    if _overlay.wave is not None:
+        _overlay.wave.stop()
+    _overlay._place()  # No saved file under tmp_path, so this lands on the default spot.
+    return _overlay
 
 
 def drag(pill, start, end):
@@ -108,6 +131,64 @@ def test_move_mode_keeps_the_pill_visible_until_you_let_go(pill):
     drag(pill, (0, 0), (400, 300))
     pill._tick()
     assert not pill.moving and pill.state == "idle"
+
+
+def test_the_accent_colours_recording_and_leaves_the_other_states_alone(pill):
+    pill.accent = "#38bdf8"
+    pill.state = "recording"
+    assert pill.build_frame().color == "#38bdf8"
+    # Amber still means "working", green "done", red "failed" — those carry meaning.
+    for state, expected in (("transcribing", "#f59e0b"), ("done", "#22c55e"), ("error", "#ef4444")):
+        pill.state = state
+        assert pill.build_frame().color == expected
+
+
+@pytest.mark.parametrize("junk", ["", "not-a-colour", "#fff", None, 42, "#gggggg"])
+def test_a_junk_accent_falls_back_instead_of_breaking_every_frame(junk):
+    # rgb() runs per frame, so a typo in config.toml must not raise inside the render loop.
+    assert pill_module.valid_accent(junk) == pill_module.DEFAULT_ACCENT
+
+
+def test_a_real_accent_is_kept():
+    for accent in pill_module.ACCENTS:
+        assert pill_module.valid_accent(accent) == accent
+
+
+def test_the_wave_fills_whichever_monitor_the_pill_is_on(pill):
+    if pill.wave is None:
+        pytest.skip("no wave overlay")
+    x, y = pill.position
+    whole = pill._monitor_info(x, y, whole=True)
+    work = pill._monitor_info(x, y)
+    assert whole is not None
+    # The wave covers the display edge to edge, unlike the work area the pill is clamped to.
+    assert whole[3] >= work[3]
+
+    pill._sync_wave("recording")
+    assert pill.wave.playing
+    assert pill.wave._monitor == whole
+    # A square buffer on a wide display would stretch the crests into ovals.
+    buffer_w, buffer_h = pill.wave._buffer_size
+    assert buffer_w / buffer_h == pytest.approx(
+        (whole[2] - whole[0]) / (whole[3] - whole[1]), rel=0.01
+    )
+
+
+def test_leaving_recording_pulls_the_wave(pill):
+    if pill.wave is None:
+        pytest.skip("no wave overlay")
+    pill._sync_wave("recording")
+    assert pill.wave.playing
+    pill._sync_wave("idle")
+    assert not pill.wave.playing
+
+
+def test_the_wave_stops_itself_when_the_animation_expires(pill):
+    if pill.wave is None:
+        pytest.skip("no wave overlay")
+    pill._sync_wave("recording")
+    pill.wave.render(wave_module.END_MS + 1)
+    assert not pill.wave.playing, "a wave left playing would sit on screen forever"
 
 
 def test_the_window_is_actually_bound_to_the_drag_handlers(pill):

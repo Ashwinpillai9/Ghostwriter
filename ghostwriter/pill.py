@@ -23,10 +23,10 @@ BARS_LEFT = 67  # Where the waveform starts inside the pill, per the design.
 LABEL_LEFT = 38
 LABEL_SIZE = 13
 
-# The surface is bigger than the pill so the glow and the activation wave have room; the pill
-# sits in the middle and the rest stays transparent (and therefore click-through). The size is
-# a performance ceiling as much as a design choice — see WAVE_REACH.
-SURFACE_W, SURFACE_H = 700, 360
+# The surface is bigger than the pill so the glow and the activation rings have room; the pill
+# sits in the middle and the rest stays transparent (and therefore click-through). The wave that
+# sweeps the display is a separate window — see wave.py — so this only has to hold the rings.
+SURFACE_W, SURFACE_H = 480, 240
 PAD_X = (SURFACE_W - WIDTH) // 2
 PAD_Y = (SURFACE_H - HEIGHT) // 2
 CENTER = (SURFACE_W / 2, SURFACE_H / 2)
@@ -51,6 +51,11 @@ COLORS = {
     "moving": "#38bdf8",
 }
 
+# The accent replaces COLORS["recording"] and tints the bars, glow, border, bloom and wave
+# together — the design exposes it as a switchable prop with exactly these four choices.
+ACCENTS = ("#38bdf8", "#ef4444", "#22c55e", "#a855f7")
+DEFAULT_ACCENT = "#38bdf8"
+
 LABELS = {
     "transcribing": "Transcribing…",
     "done": "Pasted",
@@ -58,19 +63,18 @@ LABELS = {
     "moving": "Drag me, then let go",
 }
 
-# The activation wave. The design sends it to the edges of the display; that is a GPU effect,
-# and compositing it full-screen in Pillow measures at 119 ms a frame (8fps), so it runs to the
-# edge of this surface instead. Blues sampled from the design's conic gradient.
-WAVE_REACH = ((SURFACE_W / 2) ** 2 + (SURFACE_H / 2) ** 2) ** 0.5
-WAVE_CRESTS = 8
-WAVE_MS = 1700.0
-WAVE_STAGGER = 140.0
-WAVE_BAND = 20  # Crests stay this thick in pixels however far they travel.
-# The design masks and blurs each crest separately, which keeps them distinct where they
-# overlap. Blurring the stack in one pass is far cheaper but pools the alpha, so the crests are
-# drawn thinner and dimmer to compensate; without this the train reads as one solid donut.
-WAVE_ALPHA = 0.5
-WAVE_BLUES = [(15, 60, 224), (59, 134, 255), (18, 70, 255), (43, 107, 255)]
+
+def valid_accent(value) -> str:
+    """A usable "#rrggbb", or the default.
+
+    `rgb()` runs on every frame, so a typo in config.toml would otherwise raise forever inside
+    the render loop rather than once at startup.
+    """
+    try:
+        rgb(str(value))
+    except Exception:  # noqa: BLE001 - anything unparseable falls back
+        return DEFAULT_ACCENT
+    return str(value)
 
 
 def rgb(hex_color: str) -> tuple[int, int, int]:
@@ -183,8 +187,6 @@ class Frame:
         label: str = "",
         label_opacity: float = 0.0,
         rings: list[tuple[float, float, float]] | None = None,
-        wave: list[tuple[float, float, float]] | None = None,
-        flash: float = 0.0,
     ):
         self.state = state
         self.color = color
@@ -198,44 +200,6 @@ class Frame:
         self.label = label
         self.label_opacity = label_opacity
         self.rings = rings or []
-        self.wave = wave or []
-        self.flash = flash
-
-    def _render_wave(self) -> Image.Image:
-        """The bioluminescent crests, drawn as one layer and blurred once.
-
-        The design blurs every crest separately; blurring the stack once is visually close and
-        eight times cheaper, which is what keeps the whole effect inside a frame budget.
-        """
-        layer = Image.new("RGBA", (SURFACE_W, SURFACE_H), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(layer)
-        for index, (size, size_y, opacity) in enumerate(self.wave):
-            if opacity <= 0:
-                continue
-            tint = WAVE_BLUES[index % len(WAVE_BLUES)]
-            draw.ellipse(
-                (
-                    CENTER[0] - size / 2, CENTER[1] - size_y / 2,
-                    CENTER[0] + size / 2, CENTER[1] + size_y / 2,
-                ),
-                outline=(*tint, int(255 * min(1.0, opacity) * WAVE_ALPHA)),
-                width=WAVE_BAND,
-            )
-        layer = layer.filter(ImageFilter.GaussianBlur(13))
-
-        if self.flash > 0:
-            tint = rgb(self.color)
-            flash = Image.new("RGBA", (SURFACE_W, SURFACE_H), (0, 0, 0, 0))
-            radius = SURFACE_W * 0.30
-            ImageDraw.Draw(flash).ellipse(
-                (
-                    CENTER[0] - radius, CENTER[1] - radius,
-                    CENTER[0] + radius, CENTER[1] + radius,
-                ),
-                fill=(*tint, int(255 * min(1.0, self.flash))),
-            )
-            layer.alpha_composite(flash.filter(ImageFilter.GaussianBlur(40)))
-        return layer
 
     def render(self) -> Image.Image:
         tint = rgb(self.color)
@@ -244,10 +208,7 @@ class Frame:
             self.color, int(round(self.glow)), int(round(self.bloom * 100)),
             int(round(self.scale * 1000)),
         )
-        if self.wave or self.flash:
-            img = self._render_wave()  # Behind the pill, as in the design's DOM order.
-        else:
-            img = Image.new("RGBA", (SURFACE_W, SURFACE_H), (0, 0, 0, 0))
+        img = Image.new("RGBA", (SURFACE_W, SURFACE_H), (0, 0, 0, 0))
         img.alpha_composite(chrome, CHROME_AT)
         draw = ImageDraw.Draw(img)
 

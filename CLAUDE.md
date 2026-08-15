@@ -51,8 +51,12 @@ hotkeys, the microphone or the overlay.
   bitmap must be premultiplied BGRA (`tobytes("raw", "BGRa")`) or every antialiased edge picks
   up a bright halo.
 - **Blur cost is priced by area.** The pill's chrome is rendered on a small tile and pasted in;
-  blurring it across the full wave-sized surface cost ~44 ms a frame. Keep an eye on the frame
-  budget when touching `pill.py`.
+  blurring it across a larger surface cost ~44 ms a frame. Keep an eye on the frame budget when
+  touching `pill.py`.
+- **Never draw full-screen in Pillow.** The activation wave is drawn into a 640px buffer and
+  scaled up by GDI's `StretchBlt` (~0.9 ms). Doing the same work at display resolution in
+  Python is ~119 ms a frame, and it blocks the Tk loop, so the drag and status updates freeze
+  with it.
 - **Tk's `winfo_screenwidth` is the primary monitor only.** Multi-monitor positioning has to go
   through the Win32 virtual-desktop metrics; see `ghostwriter/overlay.py`.
 - **`winfo_x`/`winfo_y` go stale while a window is withdrawn.** The overlay tracks its own

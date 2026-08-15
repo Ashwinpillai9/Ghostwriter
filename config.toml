@@ -99,6 +99,12 @@ vad = true
 # Optional: input device name substring, e.g. "Microphone (Realtek". Empty = system default.
 device = ""
 
+[overlay]
+# Colour of the recording pill: the waveform bars, the glow, the border and the wave that
+# sweeps the screen. Only recording uses it — amber still means transcribing, green pasted,
+# red failed. Design palette: "#38bdf8" blue, "#ef4444" red, "#22c55e" green, "#a855f7" purple.
+accent = "#38bdf8"
+
 [output]
 # Paste via clipboard + Ctrl+V, then restore the previous clipboard contents.
 paste = true

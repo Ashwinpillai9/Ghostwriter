@@ -33,10 +33,15 @@ A tray icon appears; the status pill shows above the taskbar while recording.
 
 ## The status pill
 
-A 260×46 rounded pill that glows in the colour of whatever it is doing: red recording, amber
-transcribing, green pasted, blue while you drag it. Starting a recording plays a half-second
-activation — the idle dot blooms, stretches into the 21-bar waveform, and a wave rolls out
-behind the pill and fades.
+A 260×46 rounded pill that glows in the colour of whatever it is doing: blue recording, amber
+transcribing, green pasted, red failed. Starting a recording plays a half-second activation —
+the idle dot blooms, stretches into the 21-bar waveform, and a wave rolls out across the
+display behind it.
+
+The recording colour is `overlay.accent` in `config.toml`, and it tints the bars, glow, border,
+bloom and wave together. The design's palette is `#38bdf8` blue (the default), `#ef4444` red,
+`#22c55e` green and `#a855f7` purple. Only recording uses it — amber still means *working*,
+green *done* and red *failed*, so those keep their meaning.
 
 None of that is drawn by Tk. A Tk canvas has no antialiasing, no rounded window, no blur and
 no per-element opacity, so each frame is composed with Pillow in `ghostwriter/pill.py` and
@@ -44,11 +49,16 @@ handed to Win32's `UpdateLayeredWindow`, which accepts a full alpha channel. Tk 
 window, the event loop and the input handling. Transparent pixels are click-through, so the
 padding that gives the glow room never swallows a click meant for the window behind it.
 
-The activation wave runs to the edge of the pill's own window rather than to the edges of the
-display as designed. That is a GPU effect: compositing it full-screen in Pillow measures at
-119 ms a frame (8fps), and it would block the Tk loop — and therefore the drag and every
-status update — for the whole animation. Doing it properly needs a GPU-composited layer, which
-is a much larger dependency than this app carries.
+**The activation wave** fills whichever display the pill is on. It is a second, click-through
+window covering that monitor, so the crests sweep over your other applications without
+interrupting anything — they cannot receive a click at all.
+
+Drawing it at display resolution in Pillow costs ~119 ms a frame (8fps). The trick is that the
+expensive part was never the pixels, it was doing per-pixel work in Python: the wave is drawn
+into a 640px-wide buffer and GDI's `StretchBlt` scales it across the display for ~0.9 ms, with
+the fullscreen `UpdateLayeredWindow` costing another ~0.8 ms. The image is heavily blurred, so
+scaling it up loses nothing visible. A whole frame — pill, wave and all — measures 9 ms on a
+1707×960 display and 10.7 ms on a 1920×1080 one, inside the 16 ms a 60fps budget allows.
 
 **Moving the pill.** Drag it whenever it is visible. Since it hides itself when idle, the tray
 menu has a **Move overlay** item that brings it up on demand — drag it and let go. The position

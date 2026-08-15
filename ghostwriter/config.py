@@ -49,6 +49,9 @@ DEFAULTS: dict[str, Any] = {
         "vad": True,
         "device": "",
     },
+    "overlay": {
+        "accent": "#38bdf8",
+    },
     "output": {
         "paste": True,
         "clipboard_restore_delay": 0.35,

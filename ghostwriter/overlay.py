@@ -10,7 +10,6 @@ click-through, so the padding around the pill never swallows a click meant for t
 from __future__ import annotations
 
 import ctypes
-import ctypes.wintypes as wt
 import json
 import logging
 import queue
@@ -19,8 +18,7 @@ import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
 
-import math
-
+from . import win32
 from .pill import (
     BARS,
     COLORS,
@@ -30,13 +28,13 @@ from .pill import (
     PAD_Y,
     SURFACE_H,
     SURFACE_W,
-    WAVE_CRESTS,
-    WAVE_MS,
-    WAVE_REACH,
-    WAVE_STAGGER,
     WIDTH,
+    DEFAULT_ACCENT,
     Frame,
+    rgb,
+    valid_accent,
 )
+from .wave import ScreenWave
 
 log = logging.getLogger(__name__)
 
@@ -46,16 +44,6 @@ POSITION_FILE = Path(__file__).resolve().parent.parent / "overlay_position.json"
 FRAME_MS = 16  # ~60fps, so the activation morph is smooth.
 ACTIVATE_MS = 560.0  # Idle dot -> full waveform. The design's budget, matched exactly.
 RINGS_MS = 1200.0  # Expanding rings outlive the morph slightly.
-WAVE_END_MS = WAVE_MS + WAVE_CRESTS * WAVE_STAGGER  # Last crest clears the surface.
-
-# Keeps the pill from taking focus away from the app you're dictating into, and marks it as a
-# layered window so UpdateLayeredWindow can paint it.
-_GWL_EXSTYLE = -20
-_WS_EX_LAYERED = 0x00080000
-_WS_EX_NOACTIVATE = 0x08000000
-_WS_EX_TOOLWINDOW = 0x00000080
-_ULW_ALPHA = 2
-_AC_SRC_OVER, _AC_SRC_ALPHA = 0x00, 0x01
 
 # Tk's winfo_screenwidth/height only ever describe the *primary* monitor, so clamping to them
 # pins the pill to one display. These report the whole virtual desktop instead.
@@ -66,60 +54,15 @@ _SM_CYVIRTUALSCREEN = 79
 _MONITOR_DEFAULTTONEAREST = 2
 
 
-class _RECT(ctypes.Structure):
-    _fields_ = [
-        ("left", ctypes.c_long),
-        ("top", ctypes.c_long),
-        ("right", ctypes.c_long),
-        ("bottom", ctypes.c_long),
-    ]
-
-
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", ctypes.c_ulong),
-        ("rcMonitor", _RECT),
-        ("rcWork", _RECT),
-        ("dwFlags", ctypes.c_ulong),
-    ]
-
-
-class _POINT(ctypes.Structure):
-    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-
-class _SIZE(ctypes.Structure):
-    _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
-
-
-class _BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [
-        ("biSize", wt.DWORD), ("biWidth", ctypes.c_long), ("biHeight", ctypes.c_long),
-        ("biPlanes", wt.WORD), ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
-        ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", ctypes.c_long),
-        ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", wt.DWORD), ("biClrImportant", wt.DWORD),
-    ]
-
-
-class _BITMAPINFO(ctypes.Structure):
-    _fields_ = [("bmiHeader", _BITMAPINFOHEADER), ("bmiColors", wt.DWORD * 3)]
-
-
-class _BLENDFUNCTION(ctypes.Structure):
-    _fields_ = [
-        ("BlendOp", ctypes.c_byte), ("BlendFlags", ctypes.c_byte),
-        ("SourceConstantAlpha", ctypes.c_byte), ("AlphaFormat", ctypes.c_byte),
-    ]
-
-
 def ease_out(progress: float) -> float:
     """Cubic ease-out, the curve the design animates the activation morph on."""
     return 1 - (1 - progress) ** 3
 
 
 class Overlay:
-    def __init__(self, level_source: Callable[[], float]):
+    def __init__(self, level_source: Callable[[], float], accent: str = DEFAULT_ACCENT):
         self.level_source = level_source
+        self.accent = valid_accent(accent)
         self.events: queue.Queue[tuple] = queue.Queue()
         self.state = "idle"
         self.message = ""
@@ -130,7 +73,8 @@ class Overlay:
         self._drag_offset: tuple[int, int] | None = None
         self._dragged = False
         self._hwnd = None
-        self._dib = None
+        self._surface: win32.Surface | None = None
+        self._tick_id = None
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -144,7 +88,12 @@ class Overlay:
         self.root.configure(cursor="fleur")
         self._place()
         self._make_layered()
-        self.root.after(FRAME_MS, self._tick)
+        try:
+            self.wave: ScreenWave | None = ScreenWave(self.root)
+        except Exception:  # noqa: BLE001 - the pill is the feature; the wave is decoration
+            log.warning("wave overlay unavailable", exc_info=True)
+            self.wave = None
+        self._tick_id = self.root.after(FRAME_MS, self._tick)
 
     # --- position --------------------------------------------------------
 
@@ -183,22 +132,29 @@ class Overlay:
             pass
         return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
 
-    def _work_area(self, x: int, y: int) -> tuple[int, int, int, int] | None:
-        """The usable area of the monitor nearest the pill's centre, excluding the taskbar."""
+    def _monitor_info(self, x: int, y: int, whole: bool = False):
+        """The monitor nearest the pill's centre, as (left, top, right, bottom).
+
+        `whole` returns the full display; otherwise the work area, which excludes the taskbar.
+        """
         try:
             user32 = ctypes.windll.user32
-            point = _POINT(int(x + WIDTH / 2), int(y + HEIGHT / 2))
+            point = win32.POINT(int(x + WIDTH / 2), int(y + HEIGHT / 2))
             handle = user32.MonitorFromPoint(point, _MONITOR_DEFAULTTONEAREST)
             if not handle:
                 return None
-            info = _MONITORINFO()
-            info.cbSize = ctypes.sizeof(_MONITORINFO)
+            info = win32.MONITORINFO()
+            info.cbSize = ctypes.sizeof(win32.MONITORINFO)
             if not user32.GetMonitorInfoW(handle, ctypes.byref(info)):
                 return None
-            work = info.rcWork
-            return work.left, work.top, work.right, work.bottom
+            rect = info.rcMonitor if whole else info.rcWork
+            return rect.left, rect.top, rect.right, rect.bottom
         except Exception:  # noqa: BLE001 - not Windows, or the call is unavailable
             return None
+
+    def _work_area(self, x: int, y: int) -> tuple[int, int, int, int] | None:
+        """The usable area of the monitor nearest the pill's centre, excluding the taskbar."""
+        return self._monitor_info(x, y)
 
     def _clamp(self, x: int, y: int) -> tuple[int, int]:
         """Keep the pill reachable; a window dragged off-screen cannot be dragged back.
@@ -273,60 +229,19 @@ class Overlay:
     def _make_layered(self) -> None:
         try:
             self.root.update_idletasks()
-            user32 = ctypes.windll.user32
-            hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
-            style = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
-            user32.SetWindowLongW(
-                hwnd,
-                _GWL_EXSTYLE,
-                style | _WS_EX_LAYERED | _WS_EX_NOACTIVATE | _WS_EX_TOOLWINDOW,
-            )
-            self._hwnd = hwnd
+            self._hwnd = win32.window_handle(self.root)
+            # Not click-through: the pill has to receive the drag.
+            win32.make_layered(self._hwnd, click_through=False)
+            self._surface = win32.Surface(SURFACE_W, SURFACE_H)
         except Exception:  # noqa: BLE001 - without this the pill still works, just plainer
             log.warning("could not make the overlay a layered window", exc_info=True)
 
     def _paint(self, image) -> None:
         """Hand one RGBA frame to the compositor, alpha channel and all."""
-        if self._hwnd is None:
+        if self._hwnd is None or self._surface is None:
             return
-        user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
-        # "BGRa" is Pillow's premultiplied BGRA, which is exactly what ULW_ALPHA expects;
-        # straight alpha here shows up as a bright halo around every antialiased edge.
-        data = image.tobytes("raw", "BGRa")
-
-        screen_dc = user32.GetDC(0)
-        memory_dc = gdi32.CreateCompatibleDC(screen_dc)
-        info = _BITMAPINFO()
-        info.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
-        info.bmiHeader.biWidth = SURFACE_W
-        info.bmiHeader.biHeight = -SURFACE_H  # Negative: top-down, matching Pillow's order.
-        info.bmiHeader.biPlanes = 1
-        info.bmiHeader.biBitCount = 32
-        info.bmiHeader.biCompression = 0
-        bits = ctypes.c_void_p()
-        bitmap = gdi32.CreateDIBSection(
-            memory_dc, ctypes.byref(info), 0, ctypes.byref(bits), None, 0
-        )
-        try:
-            ctypes.memmove(bits, data, len(data))
-            previous = gdi32.SelectObject(memory_dc, bitmap)
-            blend = _BLENDFUNCTION(_AC_SRC_OVER, 0, 255, _AC_SRC_ALPHA)
-            user32.UpdateLayeredWindow(
-                self._hwnd,
-                screen_dc,
-                None,  # Position is Tk's business; only the pixels are ours.
-                ctypes.byref(_SIZE(SURFACE_W, SURFACE_H)),
-                memory_dc,
-                ctypes.byref(_POINT(0, 0)),
-                0,
-                ctypes.byref(blend),
-                _ULW_ALPHA,
-            )
-            gdi32.SelectObject(memory_dc, previous)
-        finally:
-            gdi32.DeleteObject(bitmap)
-            gdi32.DeleteDC(memory_dc)
-            user32.ReleaseDC(0, screen_dc)
+        self._surface.load(image)
+        self._surface.push(self._hwnd)
 
     # --- thread-safe API -------------------------------------------------
 
@@ -335,6 +250,25 @@ class Overlay:
 
     def quit(self) -> None:
         self.events.put(("__quit__", ""))
+
+    def shutdown(self) -> None:
+        """Release the timer, the second window and the GDI surfaces.
+
+        The tick reschedules itself forever, so without cancelling it the callback outlives the
+        window it draws into.
+        """
+        if self._tick_id is not None:
+            try:
+                self.root.after_cancel(self._tick_id)
+            except Exception:  # noqa: BLE001 - already torn down
+                pass
+            self._tick_id = None
+        if self.wave is not None:
+            self.wave.destroy()
+            self.wave = None
+        if self._surface is not None:
+            self._surface.close()
+            self._surface = None
 
     # --- frame composition -----------------------------------------------
 
@@ -349,7 +283,9 @@ class Overlay:
         # state: the first 560ms of recording *is* the morph, so nothing else has to know.
         activating = state == "recording" and elapsed < ACTIVATE_MS
         ease = ease_out(min(1.0, elapsed / ACTIVATE_MS))
-        color = COLORS.get(state, COLORS["idle"])
+        # Recording (and the morph into it) wears the accent; the other states keep their own
+        # meaning — amber is "working", green is "done", red is "failed".
+        color = self.accent if state == "recording" else COLORS.get(state, COLORS["idle"])
 
         if activating:
             glow = 20 + ease * 40
@@ -373,26 +309,6 @@ class Overlay:
                         (WIDTH + progress * 150, HEIGHT + progress * 120, (1 - progress) * 0.45)
                     )
 
-        wave, flash = [], 0.0
-        if state == "recording" and elapsed < WAVE_END_MS:
-            # Surge then slack, so the train reads as swell rather than N concentric rings.
-            flash = max(0.0, 0.26 * (1 - min(1.0, elapsed / 420)) ** 2)
-            for index in range(WAVE_CRESTS):
-                progress = (elapsed - index * WAVE_STAGGER) / WAVE_MS
-                if not 0 < progress < 1:
-                    continue
-                swell = (1 - (1 - progress) ** 1.5) * (1 - 0.1 * math.sin(progress * math.tau))
-                size = 120 + swell * (WAVE_REACH * 2 - 120)
-                phase = elapsed / 190 + index * 1.1
-                wobble = (1 - progress) * 0.22
-                opacity = (
-                    min(1.0, progress * 7)
-                    * (1 - progress) ** 0.8
-                    * (0.45 + 0.55 * abs(math.sin(phase * 0.5)))
-                    * (1.0 if index < 3 else 0.6)
-                )
-                wave.append((size, size * (1 - wobble * 0.55 * math.sin(phase)), opacity))
-
         label = self.message or LABELS.get(state, "")
         return Frame(
             state=state,
@@ -406,8 +322,6 @@ class Overlay:
             label=label,
             label_opacity=0.0 if state in ("recording", "idle") else 1.0,
             rings=rings,
-            wave=wave,
-            flash=flash,
         )
 
     def _animating(self) -> bool:
@@ -416,6 +330,11 @@ class Overlay:
     # --- Tk loop ---------------------------------------------------------
 
     def _tick(self) -> None:
+        self._tick_once()
+        self._tick_id = self.root.after(FRAME_MS, self._tick)
+
+    def _tick_once(self) -> None:
+        """One frame of work. Split out from the scheduling so it can be driven in tests."""
         changed = False
         while True:
             try:
@@ -423,11 +342,13 @@ class Overlay:
             except queue.Empty:
                 break
             if state == "__quit__":
+                self.shutdown()
                 self.root.quit()
                 return
             if self.moving and state != "moving":
                 continue  # Don't let a status update hide the pill mid-drag.
-            if state != self.state:
+            entering = state != self.state
+            if entering:
                 self._state_at = time.monotonic()
                 if state == "recording":
                     self._levels = [0.0] * BARS  # Start the morph from a flat line.
@@ -439,8 +360,13 @@ class Overlay:
             else:
                 self.root.deiconify()
                 self.root.attributes("-topmost", True)
+            if entering:
+                self._sync_wave(state)
             if state in ("done", "error"):
                 self.root.after(1400, lambda: self.set_state("idle"))
+
+        if self.wave is not None and self.wave.playing:
+            self.wave.render(self._elapsed_ms())
 
         if self.state != "idle":
             if self.state == "recording":
@@ -448,7 +374,22 @@ class Overlay:
                 self._levels = self._levels[1:] + [min(1.0, self.level_source() * 8.0)]
             if changed or self._animating():
                 self._paint(self.build_frame().render())
-        self.root.after(FRAME_MS, self._tick)
+
+    def _sync_wave(self, state: str) -> None:
+        """Launch the screen-filling wave when recording starts; pull it if that is cut short."""
+        if self.wave is None:
+            return
+        if state != "recording":
+            self.wave.stop()
+            return
+        x, y = self.position
+        monitor = self._monitor_info(x, y, whole=True)
+        if monitor is None:
+            return
+        self.wave.start(monitor, (x + WIDTH // 2, y + HEIGHT // 2), rgb(self.accent))
+        # Both windows are topmost, and the wave was shown last; put the pill back on top so
+        # the crests sweep behind it, as in the design.
+        self.root.lift()
 
     def run(self) -> None:
         self.root.mainloop()
