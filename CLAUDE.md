@@ -38,6 +38,13 @@ hotkeys, the microphone or the overlay.
 
 ## Things that bite
 
+- **Tk draws none of the pill.** Frames are composed with Pillow (`ghostwriter/pill.py`) and
+  pushed via `UpdateLayeredWindow`; Tk only supplies the window, the loop and the input. The
+  bitmap must be premultiplied BGRA (`tobytes("raw", "BGRa")`) or every antialiased edge picks
+  up a bright halo.
+- **Blur cost is priced by area.** The pill's chrome is rendered on a small tile and pasted in;
+  blurring it across the full wave-sized surface cost ~44 ms a frame. Keep an eye on the frame
+  budget when touching `pill.py`.
 - **Tk's `winfo_screenwidth` is the primary monitor only.** Multi-monitor positioning has to go
   through the Win32 virtual-desktop metrics; see `ghostwriter/overlay.py`.
 - **`winfo_x`/`winfo_y` go stale while a window is withdrawn.** The overlay tracks its own

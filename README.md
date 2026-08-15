@@ -31,6 +31,25 @@ silently does nothing.
 
 A tray icon appears; the status pill shows above the taskbar while recording.
 
+## The status pill
+
+A 260×46 rounded pill that glows in the colour of whatever it is doing: red recording, amber
+transcribing, green pasted, blue while you drag it. Starting a recording plays a half-second
+activation — the idle dot blooms, stretches into the 21-bar waveform, and a wave rolls out
+behind the pill and fades.
+
+None of that is drawn by Tk. A Tk canvas has no antialiasing, no rounded window, no blur and
+no per-element opacity, so each frame is composed with Pillow in `ghostwriter/pill.py` and
+handed to Win32's `UpdateLayeredWindow`, which accepts a full alpha channel. Tk still owns the
+window, the event loop and the input handling. Transparent pixels are click-through, so the
+padding that gives the glow room never swallows a click meant for the window behind it.
+
+The activation wave runs to the edge of the pill's own window rather than to the edges of the
+display as designed. That is a GPU effect: compositing it full-screen in Pillow measures at
+119 ms a frame (8fps), and it would block the Tk loop — and therefore the drag and every
+status update — for the whole animation. Doing it properly needs a GPU-composited layer, which
+is a much larger dependency than this app carries.
+
 **Moving the pill.** Drag it whenever it is visible. Since it hides itself when idle, the tray
 menu has a **Move overlay** item that brings it up on demand — drag it and let go. The position
 is remembered in `overlay_position.json`.

@@ -23,12 +23,14 @@ def pill(monkeypatch, tmp_path):
 
 
 def drag(pill, start, end):
-    """Press at `start`, move to `end`, release — in screen coordinates."""
-    offset_x, offset_y = 10, 10
-    pill._drag_start(SimpleNamespace(x=offset_x, y=offset_y))
-    pill._drag_move(
-        SimpleNamespace(x=offset_x, y=offset_y, x_root=end[0], y_root=end[1])
-    )
+    """Grab the pill 10px in from its corner, move to `end`, release.
+
+    Event coordinates are relative to the window, which is larger than the pill, so the grab
+    point has to be offset by the transparent padding around it.
+    """
+    grab_x, grab_y = overlay_module.PAD_X + 10, overlay_module.PAD_Y + 10
+    pill._drag_start(SimpleNamespace(x=grab_x, y=grab_y))
+    pill._drag_move(SimpleNamespace(x=grab_x, y=grab_y, x_root=end[0], y_root=end[1]))
     pill.root.update_idletasks()
     pill._drag_end(SimpleNamespace())
 
@@ -36,7 +38,6 @@ def drag(pill, start, end):
 def test_dragging_moves_the_window(pill):
     drag(pill, (0, 0), (400, 300))
     assert pill.position == (390, 290)
-    assert pill.root.geometry().endswith("+390+290")
 
 
 def test_the_position_survives_a_restart(pill):
@@ -109,6 +110,14 @@ def test_move_mode_keeps_the_pill_visible_until_you_let_go(pill):
     assert not pill.moving and pill.state == "idle"
 
 
-def test_the_canvas_is_actually_bound_to_the_drag_handlers(pill):
-    bound = pill.canvas.bind()
+def test_the_window_is_actually_bound_to_the_drag_handlers(pill):
+    bound = pill.root.bind()
     assert {"<Button-1>", "<B1-Motion>", "<ButtonRelease-1>"} <= set(bound)
+
+
+def test_dragging_moves_the_window_not_just_the_pill(pill):
+    # The window is larger than the pill; geometry must place it PAD behind the pill so the
+    # glow and wave have room without the pill drifting from where you dropped it.
+    drag(pill, (0, 0), (500, 400))
+    x, y = pill.position
+    assert pill.root.geometry().endswith(f"+{x - overlay_module.PAD_X}+{y - overlay_module.PAD_Y}")
