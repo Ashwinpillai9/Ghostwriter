@@ -55,10 +55,14 @@ interrupting anything — they cannot receive a click at all.
 
 Drawing it at display resolution in Pillow costs ~119 ms a frame (8fps). The trick is that the
 expensive part was never the pixels, it was doing per-pixel work in Python: the wave is drawn
-into a 640px-wide buffer and GDI's `StretchBlt` scales it across the display for ~0.9 ms, with
-the fullscreen `UpdateLayeredWindow` costing another ~0.8 ms. The image is heavily blurred, so
-scaling it up loses nothing visible. A whole frame — pill, wave and all — measures 9 ms on a
-1707×960 display and 10.7 ms on a 1920×1080 one, inside the 16 ms a 60fps budget allows.
+into a 960px-wide buffer and GDI's `StretchBlt` scales it across the display for ~0.9 ms, with
+the fullscreen `UpdateLayeredWindow` costing another ~0.8 ms.
+
+Nothing is blurred, either. A Gaussian blur is priced by area — ~6.7 ms whatever the radius —
+which capped the buffer resolution; each crest draws its own falloff as concentric bands, which
+is priced by perimeter. A whole frame, pill and wave together, measures ~9 ms against the 16 ms
+a 60fps budget allows. The pill's cached chrome is built a frame at a time while it sits idle,
+so the first activation animates as smoothly as the tenth.
 
 **Moving the pill.** Drag it whenever it is visible. Since it hides itself when idle, the tray
 menu has a **Move overlay** item that brings it up on demand — drag it and let go. The position

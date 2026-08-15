@@ -31,6 +31,7 @@ from .pill import (
     WIDTH,
     DEFAULT_ACCENT,
     Frame,
+    chrome,
     rgb,
     valid_accent,
 )
@@ -75,6 +76,7 @@ class Overlay:
         self._hwnd = None
         self._surface: win32.Surface | None = None
         self._tick_id = None
+        self._warm_todo: list | None = None
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -275,10 +277,12 @@ class Overlay:
     def _elapsed_ms(self) -> float:
         return (time.monotonic() - self._state_at) * 1000
 
-    def build_frame(self) -> Frame:
-        """Translate the current state and its age into the design's `live` values."""
-        elapsed = self._elapsed_ms()
-        state = self.state
+    def _look(self, state: str, elapsed: float):
+        """The design's `live` values for a state at a given age.
+
+        Split out from `build_frame` so the cache warmer can walk the same curve without
+        touching any live state.
+        """
         # The design plays "activating" and then hands over to "recording". Here that is one
         # state: the first 560ms of recording *is* the morph, so nothing else has to know.
         activating = state == "recording" and elapsed < ACTIVATE_MS
@@ -299,6 +303,47 @@ class Overlay:
         else:
             glow, bloom, scale = 24.0, 0.08, 1.0
             orb, bars_opacity = (16.0, 10.0, 10.0, -5.0), 0.0
+        return color, glow, bloom, scale, orb, bars_opacity
+
+    def _warm_plan(self) -> list[tuple[str, int, int, int]]:
+        """Every chrome variant the animation will ask for.
+
+        Each costs ~25ms to build and the morph needs a fresh one every frame, which is what
+        made the first activation stutter through the animation that most needs to be smooth.
+        """
+        plan = []
+        for state in ("recording", "transcribing", "done", "error", "moving"):
+            steps = int(ACTIVATE_MS / FRAME_MS) + 2 if state == "recording" else 1
+            for step in range(steps):
+                _, glow, bloom, scale, _, _ = self._look(state, step * FRAME_MS)
+                color = self.accent if state == "recording" else COLORS[state]
+                plan.append((color, round(glow), round(bloom * 100), round(scale * 1000)))
+        return plan
+
+    def warm(self, budget: int = 1) -> None:
+        """Build a few cached frames. Driven from the tick while idle, so it costs nothing.
+
+        Deliberately on the Tk thread rather than a worker: Pillow filling this cache
+        concurrently with the draw loop crashed the interpreter outright, and while idle there
+        is no frame being drawn for it to compete with anyway.
+        """
+        if self._warm_todo is None:
+            self._warm_todo = self._warm_plan()
+        for _ in range(budget):
+            if not self._warm_todo:
+                return
+            try:
+                chrome(*self._warm_todo.pop())
+            except Exception:  # noqa: BLE001 - a cold cache only costs a stutter
+                log.debug("chrome warm-up failed", exc_info=True)
+                self._warm_todo = []
+                return
+
+    def build_frame(self) -> Frame:
+        """Translate the current state and its age into the design's `live` values."""
+        elapsed = self._elapsed_ms()
+        state = self.state
+        color, glow, bloom, scale, orb, bars_opacity = self._look(state, elapsed)
 
         rings = []
         if state == "recording" and elapsed < RINGS_MS:
@@ -368,7 +413,9 @@ class Overlay:
         if self.wave is not None and self.wave.playing:
             self.wave.render(self._elapsed_ms())
 
-        if self.state != "idle":
+        if self.state == "idle":
+            self.warm()  # Nothing on screen to draw, so the blur is invisible work.
+        else:
             if self.state == "recording":
                 # Scale RMS into something visible; speech usually sits well under 0.2.
                 self._levels = self._levels[1:] + [min(1.0, self.level_source() * 8.0)]

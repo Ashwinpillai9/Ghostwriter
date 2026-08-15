@@ -1,9 +1,13 @@
 """The activation wave: a bioluminescent train that rolls from the pill to the screen edges.
 
 Drawing this at display resolution in Pillow costs ~119ms a frame. Drawing it into a small
-buffer and letting GDI's StretchBlt scale it across the display costs ~9ms, because the
-expensive part was never the pixels — it was doing per-pixel work in Python. The image is
-heavily blurred, so scaling it up loses nothing.
+buffer and letting GDI's StretchBlt scale it across the display costs ~5ms, because the
+expensive part was never the pixels — it was doing per-pixel work in Python.
+
+Nothing here is blurred. A Gaussian blur is priced by area, so it cost ~6.7ms whatever the
+radius and put a hard ceiling on the buffer resolution; the crests draw their own falloff as
+concentric bands instead, which is priced by perimeter. That bought a bigger buffer, a cleaner
+core, and a cheaper frame all at once.
 
 The window is click-through and covers one whole monitor, so the wave sweeps over other
 applications without interrupting anything you are doing.
@@ -15,22 +19,48 @@ import logging
 import math
 import tkinter as tk
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 from . import win32
 
 log = logging.getLogger(__name__)
 
-BUFFER_W = 640  # Height follows the monitor's aspect, so the scale stays uniform.
+BUFFER_W = 960  # Height follows the monitor's aspect, so the scale stays uniform.
 CRESTS = 8
 DURATION_MS = 1700.0
 STAGGER_MS = 140.0
 END_MS = DURATION_MS + CRESTS * STAGGER_MS
-BAND = 9  # Crest thickness in buffer pixels; ~24 on a 1707px-wide display.
-BLUR = 6
+START_RADIUS = 20  # Buffer pixels. Crests are born just outside the pill.
 FLASH_MS = 420.0
-# Sampled from the design's conic gradient: #0f3ce0 -> #3b86ff -> #1246ff -> #2b6bff.
-BLUES = [(15, 60, 224), (59, 134, 255), (18, 70, 255), (43, 107, 255)]
+
+# Each crest is a bright core fading into a deep-blue halo. The falloff is drawn directly, as
+# concentric bands of decreasing alpha, rather than by blurring a hard band afterwards: a
+# Gaussian blur costs ~6.7ms because it is priced by *area*, which caps the buffer resolution,
+# while these bands cost perimeter and stay cheap however big the buffer gets. Drawing the
+# gradient also gives a cleaner core than smearing one, which is what makes it read as
+# luminous instead of smudged.
+BAND_STEPS = 14  # Bands either side of the crest line.
+BAND_STEP_PX = 4
+FALLOFF = 3.4  # Higher concentrates the light into the core.
+# Peak alpha at the crest line. Sampled off the reference, whose brightest ring pixels sit near
+# 50% over the desktop; pushing this to clipping turns the light into flat painted rings.
+INTENSITY = 1.15
+# Deep blues from the design's conic gradient, with brighter cores sampled off the reference.
+HALOS = [(12, 56, 232), (16, 68, 255), (36, 100, 255), (24, 82, 246)]
+CORES = [(150, 224, 255), (56, 189, 248), (110, 200, 255), (86, 205, 252)]
+
+# (offset from the crest line, weight) — precomputed once; the shape never changes. Sorted
+# dimmest-first so the bright core is painted last and nothing overwrites it.
+PROFILE = sorted(
+    (
+        (step * BAND_STEP_PX, math.exp(-((step / BAND_STEPS) ** 2) * FALLOFF))
+        for step in range(-BAND_STEPS, BAND_STEPS + 1)
+    ),
+    key=lambda band: band[1],
+)
+# The bloom under the pill as the wave departs, as filled ellipses fading outward — same
+# reason as the crests: no full-surface blur.
+FLASH_RINGS = 14
 
 
 def reach(center: tuple[float, float], size: tuple[float, float]) -> float:
@@ -53,14 +83,18 @@ def crests(elapsed: float, center: tuple[float, float], size: tuple[float, float
         if not 0 < progress < 1:
             continue
         swell = (1 - (1 - progress) ** 1.5) * (1 - 0.1 * math.sin(progress * math.tau))
-        radius = (30 + swell * (limit - 30)) / 2
+        # `limit` is the distance to the farthest corner, so it *is* the radius a crest needs
+        # to clear the screen. Halving it here is what used to stop the wave halfway out.
+        radius = START_RADIUS + swell * (limit - START_RADIUS)
         phase = elapsed / 190 + index * 1.1
         wobble = (1 - progress) * 0.22
         opacity = (
             min(1.0, progress * 7)
-            * (1 - progress) ** 0.8
-            * (0.45 + 0.55 * abs(math.sin(phase * 0.5)))
-            * (1.0 if index < 3 else 0.6)
+            # Fades gently rather than steeply, so a crest still reads as light when it
+            # arrives at the edge instead of dying in the middle of the screen.
+            * (1 - progress) ** 0.5
+            * (0.6 + 0.4 * abs(math.sin(phase * 0.5)))
+            * (1.0 if index < 3 else 0.75)
         )
         out.append((radius, radius * (1 - wobble * 0.55 * math.sin(phase)), opacity))
     return out
@@ -151,24 +185,39 @@ class ScreenWave:
         image = Image.new("RGBA", size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         cx, cy = self._center
-        for index, (rx, ry, opacity) in enumerate(crests(elapsed, self._center, size)):
-            tint = BLUES[index % len(BLUES)]
-            draw.ellipse(
-                (cx - rx, cy - ry, cx + rx, cy + ry),
-                outline=(*tint, int(255 * min(1.0, opacity))),
-                width=BAND,
-            )
-        image = image.filter(ImageFilter.GaussianBlur(BLUR))
 
+        # The bloom goes down first: ImageDraw replaces pixels rather than blending them, so
+        # drawing it afterwards would punch a hole through the crests leaving the pill.
         flash = flash_at(elapsed)
         if flash > 0:
-            glow = Image.new("RGBA", size, (0, 0, 0, 0))
-            radius = size[0] * 0.16
-            ImageDraw.Draw(glow).ellipse(
-                (cx - radius, cy - radius, cx + radius, cy + radius),
-                fill=(*self._color, int(255 * flash)),
-            )
-            image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(24)))
+            outer = size[0] * 0.22
+            for ring in range(FLASH_RINGS, 0, -1):
+                span = outer * ring / FLASH_RINGS
+                alpha = int(255 * flash * (1 - ring / FLASH_RINGS) ** 1.6 * 0.5)
+                if alpha <= 0:
+                    continue
+                draw.ellipse(
+                    (cx - span, cy - span * 0.62, cx + span, cy + span * 0.62),
+                    fill=(*self._color, alpha),
+                )
+
+        train = crests(elapsed, self._center, size)
+        # Widest, dimmest bands first so the bright core lands on top of its own halo.
+        for offset, weight in PROFILE:
+            for index, (rx, ry, opacity) in enumerate(train):
+                alpha = int(255 * min(1.0, opacity * weight * INTENSITY))
+                if alpha <= 0:
+                    continue
+                halo = HALOS[index % len(HALOS)]
+                core = CORES[index % len(CORES)]
+                tint = tuple(
+                    int(halo[c] + (core[c] - halo[c]) * weight) for c in range(3)
+                )
+                left, top = cx - rx - offset, cy - ry - offset
+                right, bottom = cx + rx + offset, cy + ry + offset
+                if right - left < 2 or bottom - top < 2:
+                    continue
+                draw.ellipse((left, top, right, bottom), outline=(*tint, alpha), width=BAND_STEP_PX + 1)
 
         self._buffer.load(image)
         self._screen.stretch_from(self._buffer)

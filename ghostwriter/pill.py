@@ -111,7 +111,7 @@ def _shadow(scale: int) -> Image.Image:
 
 
 @functools.lru_cache(maxsize=256)
-def _chrome(color: str, glow: int, bloom: int, scale: int) -> Image.Image:
+def chrome(color: str, glow: int, bloom: int, scale: int) -> Image.Image:
     """Everything that doesn't change between frames of the same state, cached.
 
     `glow`, `bloom` and `scale` arrive pre-quantised (see `Frame`) so that the cache actually
@@ -204,12 +204,12 @@ class Frame:
     def render(self) -> Image.Image:
         tint = rgb(self.color)
         # Quantise so the chrome cache hits across frames instead of missing every time.
-        chrome = _chrome(
+        tile = chrome(
             self.color, int(round(self.glow)), int(round(self.bloom * 100)),
             int(round(self.scale * 1000)),
         )
         img = Image.new("RGBA", (SURFACE_W, SURFACE_H), (0, 0, 0, 0))
-        img.alpha_composite(chrome, CHROME_AT)
+        img.alpha_composite(tile, CHROME_AT)
         draw = ImageDraw.Draw(img)
 
         for width, height, opacity in self.rings:
