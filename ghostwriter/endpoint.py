@@ -124,10 +124,17 @@ class SilenceEndpointer:
                     speech_start = now
                 elif not speech_seen and now - speech_start >= self.min_speech:
                     speech_seen = True
-            else:
-                # A brief dip mid-word shouldn't count as the start of speech.
-                if speech_start is not None and not speech_seen:
-                    speech_start = None
+            elif (
+                speech_start is not None
+                and not speech_seen
+                and now - last_voice >= self.silence_timeout
+            ):
+                # Real speech is not a continuous tone: stop consonants, breaths and the gaps
+                # between words all read as momentary not-speech, even mid-sentence. Only give
+                # up on this being the start of an utterance after a pause as long as the one
+                # that would end an utterance already in progress — the same silence_timeout,
+                # so "how long a pause counts as real" means one thing throughout.
+                speech_start = None
             reason = self.reason_to_stop(started, speech_seen, last_voice)
             if reason:
                 return reason

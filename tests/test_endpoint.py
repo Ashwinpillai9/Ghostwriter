@@ -49,6 +49,23 @@ def test_brief_blip_does_not_count_as_speech():
     assert ep.wait(cancelled=lambda: False, poll=0.005) == "no_speech"
 
 
+def test_a_natural_pause_mid_utterance_does_not_discard_it():
+    # The regression: real speech dips below the voice threshold constantly — stop consonants,
+    # breaths, the gap between words — and the old code reset the "have you started talking"
+    # timer on any single such dip. Neither burst here reaches min_speech on its own; only
+    # treating them as one utterance, because the gap between them is short, does.
+    ep = make([0.5] * 3 + [0.0] * 3 + [0.5] * 3 + [0.0] * 40)
+    assert ep.wait(cancelled=lambda: False, poll=0.005) == "silence"
+
+
+def test_a_real_gap_still_resets_rather_than_accumulating_forever():
+    # The other side of that fix: it must not become so lenient that two unrelated blips far
+    # apart get stitched into one utterance. A gap as long as silence_timeout is treated as a
+    # real pause, exactly as it would be to end an utterance already in progress.
+    ep = make([0.5] * 3 + [0.0] * 40 + [0.5] * 3 + [0.0] * 400, lead_in=1.0)
+    assert ep.wait(cancelled=lambda: False, poll=0.005) == "no_speech"
+
+
 def test_reason_to_stop_waits_while_speech_is_recent():
     ep = make([], silence_timeout=1.0, lead_in=5.0)
     now = time.monotonic()
