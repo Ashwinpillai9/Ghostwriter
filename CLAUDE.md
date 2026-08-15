@@ -9,9 +9,14 @@ Every feature, bug fix or improvement starts on its own branch — never commit 
 1. `git checkout -b <type>/<short-description>` before the first edit. Types: `feat/`, `fix/`,
    `chore/`.
 2. Commit as usual. The branch is pushed automatically (see below).
-3. Open a PR with `gh pr create` when the work is done and tested.
-4. **Wait for the user's approval before merging.** Once they approve, merge the PR
+3. **Stop there and hand the branch to the user to test.** Say what changed and how to try it.
+4. **Do not run `gh pr create` until the user has tested the branch and asked for a PR.**
+   Passing tests are not approval; neither is "the work looks done". Wait to be told.
+5. Once they approve the PR and are ready to land it, merge it
    (`gh pr merge --squash --delete-branch`) and return to `main`.
+
+Steps 3–5 are two separate gates, and the user opens each one. Automated checks never
+substitute for either.
 
 Two hooks in `.claude/settings.json` enforce the mechanical half of this:
 
@@ -21,8 +26,8 @@ Two hooks in `.claude/settings.json` enforce the mechanical half of this:
   is ahead of its remote, setting the upstream on first push. It never pushes a protected
   branch, and skips a diverged branch rather than force-pushing over someone else's work.
 
-Neither hook can decide *when* a PR should merge — that is the approval step above, and it
-stays a judgement call.
+Neither hook can decide *when* a PR should be opened or merged. Both of those are the user's
+calls, above, and no hook enforces them.
 
 ## Testing
 
