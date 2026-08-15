@@ -9,7 +9,10 @@ Every feature, bug fix or improvement starts on its own branch — never commit 
 1. `git checkout -b <type>/<short-description>` before the first edit. Types: `feat/`, `fix/`,
    `chore/`.
 2. Commit as usual. The branch is pushed automatically (see below).
-3. **Stop there and hand the branch to the user to test.** Say what changed and how to try it.
+3. **Stop there and hand the branch to the user to test.** Every change ends with concrete
+   testing steps: the exact command to run, what to do once it is running, and what a correct
+   result looks like — including what to check that automated tests cannot cover. Never end a
+   change with just "tests pass".
 4. **Do not run `gh pr create` until the user has tested the branch and asked for a PR.**
    Passing tests are not approval; neither is "the work looks done". Wait to be told.
 5. Once they approve the PR and are ready to land it, merge it
