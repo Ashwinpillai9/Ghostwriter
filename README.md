@@ -31,6 +31,24 @@ silently does nothing.
 
 A tray icon appears; the status pill shows above the taskbar while recording.
 
+## Models
+
+Everything runs locally through `faster-whisper` — nothing leaves the machine, no API key.
+Three models are involved, each doing a different job:
+
+| Purpose | Model | Runs on | Config |
+| --- | --- | --- | --- |
+| Dictation (what transcribes your speech) | `model.name`, default `large-v3-turbo` (~1.6 GB) | GPU (`cuda`/`float16`), falls back to CPU `int8` automatically if CUDA fails | `[model]` |
+| Wake-word check ("hey ghost") | `tiny.en` (~75 MB) | CPU only, always — kept off the GPU so it never competes with dictation | `[wakeword]` |
+| Voice activity (when you've started/stopped talking) | Silero VAD | CPU, always — ships inside `faster-whisper`, no separate download | `[endpoint]`, `[wakeword]` |
+
+The dictation model is the only one you'd usually change: drop `model.name` to `small.en` or
+`base.en` for a faster, less accurate model, or leave it at `large-v3-turbo` for the best
+accuracy. See "GPU notes" below for why it needs `float16` specifically, and what happens if
+CUDA isn't available. Wake-word detection intentionally uses a separate, much smaller model
+(`tiny.en`) run on the CPU — see "Wake word" for why. Silero VAD is not configurable by name;
+only its thresholds (`vad_threshold`, etc.) are.
+
 ## The status pill
 
 A 260×46 rounded pill that glows in the colour of whatever it is doing: blue recording, amber
