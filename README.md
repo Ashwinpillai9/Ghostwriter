@@ -196,9 +196,14 @@ Hotkeys are matched exclusively: a chord like `Ctrl+Shift+Space` will not also f
 that in mind — `Ctrl+Space` is IntelliSense in VS Code and set-mark in readline-based shells,
 and a bound key is suppressed everywhere while Ghostwriter runs.
 
-Side-specific keys are bound by scan code rather than by name, because `keyboard` resolves the
-name `right alt` to *both* Alt keys; binding the name would swallow Left Alt and with it
-`Alt+Tab`. `right alt`, `left alt` and `altgr` are understood in `config.toml`.
+Side-specific keys are usually bound by scan code rather than by name, because `keyboard`
+resolves the name `right alt` to *both* Alt keys; binding the name would swallow Left Alt and
+with it `Alt+Tab`. `right alt`, `left alt` and `altgr` are understood in `config.toml`.
+
+`right ctrl` is the exception: Windows' low-level keyboard hook reports Left and Right Ctrl
+with the *same* scan code, so no scan-code binding can tell them apart — confirmed directly
+with `scripts\keyboard_probe.py`. Only the event's *name* distinguishes them, so Right Ctrl is
+matched that way instead of through the usual scan-code path.
 
 ## How text gets delivered
 
@@ -277,12 +282,14 @@ you want it hidden.
   to AltGr, which reports as Ctrl+Alt; that is handled. If your layout uses AltGr to type `@`
   or `€`, bind something else — a suppressed Right Alt cannot also type characters. This is why
   `right ctrl` is the default instead.
-- **Right Ctrl does nothing.** Run `scripts\keyboard_probe.py`, press Right Ctrl a few times,
-  and check the `scan_code` it prints. It should read `57373` (occasionally `57629`) — if it
-  reads `29` instead, this machine is reporting your Right Ctrl key as Left Ctrl at the driver
-  level, which no software binding can fix; try a different key. If it stays completely silent
-  with no event at all, the key may be remapped by a keyboard-utility app (Razer Synapse,
-  Logitech Options, a laptop's own Fn-key software) — check there first.
+- **Right Ctrl does nothing.** Right Ctrl is matched by name, not scan code (see "Hotkeys"
+  above), so this should be rare. Run `scripts\keyboard_probe.py` and press Right Ctrl a few
+  times — a real press shows `name='right ctrl'` even though `scan_code` reads `29`, same as
+  Left Ctrl; that's expected. If it instead prints `name='ctrl'` or `name='left ctrl'` for a
+  press you're sure was the right-hand key, something upstream (a keyboard-utility app like
+  Razer Synapse or Logitech Options, or a laptop's own Fn-key software) is remapping it before
+  Windows sees it — check there. If no event appears at all, the same remapping is the likely
+  cause.
 - **Wake word fires on its own.** Raise `wakeword.threshold` toward 0.9.
 - **Wake word never fires.** Lower it toward 0.7, and check the tray checkbox is on. Run
   `scripts\wakeword_test.py` to see what the decoder actually hears.

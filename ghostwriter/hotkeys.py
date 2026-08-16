@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import functools
 import logging
 import threading
 from collections.abc import Callable
@@ -46,24 +45,18 @@ UNAMBIGUOUS = {
 }
 
 
-# `keyboard`'s Windows name table conflates "right ctrl" with plain Ctrl: on this library,
-# key_to_scan_codes("right ctrl") returns scan code 29 alongside the codes unique to the right
-# key — but 29 is also Left Ctrl's own code. Binding the name directly with suppress=True would
-# therefore suppress Left Ctrl too, and pressing *left* Ctrl alone would fire this hotkey. This
-# is unrelated to the AltGr problem right Alt has (there is no event-swallowing here) — it is
-# purely a stale/ambiguous entry in the library's own lookup table.
+# Right Ctrl cannot be bound through `add_hotkey` at all: Windows' low-level keyboard hook
+# reports Left and Right Ctrl with the *same* raw scan code (29). The bit that actually tells
+# them apart — the hook's extended-key flag — is used by this library only to compute
+# `event.name`, never folded into the `scan_code` integer that `add_hotkey`, `is_pressed` and
+# suppression all match against. Confirmed directly: `scripts/keyboard_probe.py` shows real
+# Right Ctrl presses as `scan_code=29, name='right ctrl'`, identical in scan_code to Left Ctrl.
+# `key_to_scan_codes("right ctrl")` claims otherwise (57373/57629 alongside 29), but those extra
+# codes are synthesised from a WinAPI table-building pass, not from what a live keypress
+# actually sends — a binding on them is dead on arrival, which is exactly the "still not
+# working" this replaced. `event.name` is the only reliable signal, so this binds Right Ctrl
+# with a raw `keyboard.hook()` and matches on name instead of going through `add_hotkey`.
 RIGHT_CTRL_SPELLINGS = {"right ctrl", "right control", "rctrl"}
-
-
-@functools.lru_cache(maxsize=1)
-def _right_ctrl_codes() -> tuple[int, ...]:
-    """Scan codes unique to a hardware Right Ctrl press, with Left Ctrl's own code excluded."""
-    try:
-        right = set(keyboard.key_to_scan_codes("right ctrl"))
-        left = set(keyboard.key_to_scan_codes("left ctrl"))
-    except Exception:  # noqa: BLE001 - unknown on this layout; caller falls back to the name
-        return ()
-    return tuple(sorted(right - left))
 
 
 def resolve_key(name: str) -> str | int:
@@ -146,6 +139,7 @@ class HotkeyManager:
         self._held: set[str] = set()
         self._lock = threading.Lock()
         self._registered: list = []
+        self._hooked: list = []
         self.suppress = True
 
     def register(self, hotkeys: dict) -> None:
@@ -178,17 +172,11 @@ class HotkeyManager:
             )
 
     def _add_hold(self, chord: str, mode: str) -> None:
-        keys: list[str | int] = [trigger_key(chord)]
-        hotkey_spec: str | tuple = resolve_chord(chord)
-
-        # A bare right-ctrl chord binds to its own curated scan codes instead of the ambiguous
-        # name (see RIGHT_CTRL_SPELLINGS above), so release-watching has to poll those same
-        # codes rather than the name, which would falsely read Left Ctrl as "still held".
         if chord.strip().lower() in RIGHT_CTRL_SPELLINGS:
-            codes = _right_ctrl_codes()
-            if codes:
-                keys = list(codes)
-                hotkey_spec = (codes,)
+            self._bind_right_ctrl_hold(chord, mode)
+            return
+
+        key = trigger_key(chord)
 
         def pressed() -> None:
             if not exclusively_pressed(chord):
@@ -198,11 +186,43 @@ class HotkeyManager:
                     return  # Key auto-repeat, not a new press.
                 self._held.add(mode)
             self._safe(self.on_press, mode)()
-            threading.Thread(target=self._watch_release, args=(mode, keys), daemon=True).start()
+            threading.Thread(target=self._watch_release, args=(mode, [key]), daemon=True).start()
 
         self._registered.append(
-            keyboard.add_hotkey(hotkey_spec, pressed, suppress=self.suppress)
+            keyboard.add_hotkey(resolve_chord(chord), pressed, suppress=self.suppress)
         )
+
+    def _bind_right_ctrl_hold(self, chord: str, mode: str) -> None:
+        """Right Ctrl only, matched by `event.name` rather than `add_hotkey`'s scan codes.
+
+        This hook fires for every keystroke system-wide, so it must return True (pass through)
+        for anything that isn't Right Ctrl, or it would suppress all typing. Only Right Ctrl
+        events are acted on, and only they get suppressed, controlled by `self.suppress` exactly
+        as `add_hotkey(..., suppress=...)` would.
+        """
+
+        def on_event(event) -> bool:
+            if event.name != "right ctrl":
+                return True
+            if event.event_type == keyboard.KEY_DOWN:
+                if not exclusively_pressed(chord):
+                    return not self.suppress
+                with self._lock:
+                    if mode in self._held:
+                        return not self.suppress  # Key auto-repeat, not a new press.
+                    self._held.add(mode)
+                threading.Thread(
+                    target=self._safe(self.on_press, mode), daemon=True
+                ).start()
+            elif event.event_type == keyboard.KEY_UP:
+                with self._lock:
+                    self._held.discard(mode)
+                threading.Thread(
+                    target=self._safe(self.on_release, mode), daemon=True
+                ).start()
+            return not self.suppress
+
+        self._hooked.append(keyboard.hook(on_event, suppress=True))
 
     def _watch_release(self, mode: str, keys: list) -> None:
         released = threading.Event()
@@ -233,3 +253,9 @@ class HotkeyManager:
             except Exception:  # noqa: BLE001
                 pass
         self._registered.clear()
+        for handle in self._hooked:
+            try:
+                keyboard.unhook(handle)
+            except Exception:  # noqa: BLE001
+                pass
+        self._hooked.clear()

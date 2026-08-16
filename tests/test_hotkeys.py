@@ -1,3 +1,5 @@
+import threading
+
 import keyboard as real_keyboard
 
 import ghostwriter.hotkeys as hotkeys
@@ -30,25 +32,59 @@ def test_ordinary_keys_pass_through_by_name():
     assert hotkeys.resolve_chord("ctrl+shift+d") == ("ctrl", "shift", "d")
 
 
-def test_right_ctrl_scan_codes_exclude_left_ctrls_own_code():
-    # keyboard's own name table pollutes "right ctrl" with scan code 29, which is also Left
-    # Ctrl's code. Binding it unfiltered would suppress Left Ctrl and let it fire this hotkey.
-    hotkeys._right_ctrl_codes.cache_clear()
-    codes = hotkeys._right_ctrl_codes()
-    assert codes, "expected at least one scan code unique to Right Ctrl on this machine"
-    assert 29 not in codes
+# Right Ctrl cannot be matched through add_hotkey's scan codes at all: a real Right Ctrl press
+# and a real Left Ctrl press report the identical scan code (29) on the low-level hook, verified
+# directly with scripts/keyboard_probe.py. Only `event.name` tells them apart, so it is bound
+# with a raw `keyboard.hook()` instead — these tests cover that path, not scan-code resolution.
 
 
-def test_right_ctrl_hold_binds_the_curated_codes_not_the_ambiguous_name(monkeypatch):
-    hotkeys._right_ctrl_codes.cache_clear()
+def test_right_ctrl_hold_uses_a_raw_hook_not_add_hotkey(monkeypatch):
     fake = register_with(monkeypatch, push_to_talk="right ctrl")
-    hold_calls = [c for c in fake.calls if c[0] != hotkeys.resolve_chord("ctrl+shift+d")]
-    assert len(hold_calls) == 1
-    (spec, suppress) = hold_calls[0]
+    # Only the toggle goes through add_hotkey; push_to_talk must not, since any scan-code spec
+    # for "right ctrl" would either miss real presses or also match Left Ctrl.
+    assert len(fake.calls) == 1
+    assert fake.calls[0][0] == hotkeys.resolve_chord("ctrl+shift+d")
+    assert len(fake.hooks) == 1
+    (_callback, suppress) = fake.hooks[0]
     assert suppress
-    # A single key slot whose only alternates are the curated codes, never 29.
-    assert spec == (hotkeys._right_ctrl_codes(),)
-    assert 29 not in spec[0]
+
+
+def test_right_ctrl_hook_ignores_events_for_other_keys(monkeypatch):
+    fake = register_with(monkeypatch, push_to_talk="right ctrl")
+    on_event = fake.hooks[0][0]
+    event = FakeEvent(name="left ctrl", event_type=real_keyboard.KEY_DOWN)
+    assert on_event(event) is True  # pass through untouched
+
+
+def test_right_ctrl_hook_press_and_release_fire_by_name(monkeypatch):
+    events = []
+    done = threading.Event()
+
+    def on_press(mode):
+        events.append(("press", mode))
+
+    def on_release(mode):
+        events.append(("release", mode))
+        done.set()
+
+    fake = FakeKeyboard()
+    monkeypatch.setattr(hotkeys, "keyboard", fake)
+    manager = hotkeys.HotkeyManager(on_press, on_release, lambda: None, lambda: None)
+    manager.register({"push_to_talk": "right ctrl", "toggle": "ctrl+shift+d"})
+    on_event = fake.hooks[0][0]
+
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is False  # suppressed
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is False
+    assert done.wait(1.0), "release callback never fired"
+    assert ("press", "paste") in events
+    assert ("release", "paste") in events
+
+
+def test_right_ctrl_hook_respects_suppress_false(monkeypatch):
+    fake = register_with(monkeypatch, push_to_talk="right ctrl", suppress=False)
+    on_event = fake.hooks[0][0]
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
 
 
 def test_right_alt_fires_even_though_it_holds_alt_down(monkeypatch):
@@ -74,11 +110,21 @@ def test_extra_modifier_rejects_the_narrower_chord(monkeypatch):
     assert hotkeys.exclusively_pressed("ctrl+shift+space")
 
 
+class FakeEvent:
+    def __init__(self, name, event_type):
+        self.name = name
+        self.event_type = event_type
+
+
 class FakeKeyboard:
     """Records how each binding was registered."""
 
+    KEY_DOWN = real_keyboard.KEY_DOWN
+    KEY_UP = real_keyboard.KEY_UP
+
     def __init__(self):
         self.calls = []
+        self.hooks = []
 
     def add_hotkey(self, chord, callback, suppress=False):  # noqa: ARG002 - keyboard's API
         self.calls.append((chord, suppress))
@@ -89,6 +135,16 @@ class FakeKeyboard:
 
     def key_to_scan_codes(self, name):
         return real_keyboard.key_to_scan_codes(name)
+
+    def is_pressed(self, name):  # noqa: ARG002 - keyboard's API
+        return False
+
+    def hook(self, callback, suppress=False):
+        self.hooks.append((callback, suppress))
+        return callback
+
+    def unhook(self, handle):
+        pass
 
 
 def register_with(monkeypatch, **config):
