@@ -2,9 +2,9 @@
 
 [hotkeys]
 # Hold this to record; release to transcribe and paste. You press Enter yourself.
-# Right Alt is the default because nothing else uses it: no editor, shell or browser binds it,
-# so nothing is stolen while Ghostwriter runs. Any chord works too, e.g. "ctrl+shift+space".
-push_to_talk = "right alt"
+# Right Ctrl is the default: nothing else uses it, so nothing is stolen while Ghostwriter runs.
+# Any chord works too, e.g. "ctrl+shift+space".
+push_to_talk = "right ctrl"
 # Same as push_to_talk, but presses Enter automatically after pasting.
 # Empty = disabled. Set it to a chord (e.g. "ctrl+shift+space") if you ever want hands-free send.
 push_to_talk_send = ""

@@ -100,13 +100,12 @@ Win32 virtual-desktop metrics instead.
 
 | Hotkey | Action |
 | --- | --- |
-| Hold `Right Alt` | Dictate, paste on release — review it, then press Enter yourself |
+| Hold `Right Ctrl` | Dictate, paste on release — review it, then press Enter yourself |
 | `Ctrl+Shift+D` | Toggle hands-free recording on/off |
 | `Esc` | Discard the recording in progress |
 
-Right Alt is the default because it is the one key on a PC keyboard that nothing else claims:
-no editor, shell or browser binds it, so holding it steals nothing. Left Alt is untouched —
-`Alt+Tab` and menu access keep working.
+Right Ctrl is the default because it is a key on a PC keyboard that nothing else claims: no
+editor, shell or browser binds it, so holding it steals nothing. Left Ctrl is untouched.
 
 All of these, plus the model and vocabulary, are configurable in `config.toml`.
 
@@ -273,9 +272,10 @@ you want it hidden.
   finishes are queued, not dropped.
 - **Wrong microphone.** Set `audio.device` to part of the device name. It applies to both the
   wake-word listener and the recorder.
-- **Right Alt does nothing.** Some laptops map it to AltGr, which reports as Ctrl+Alt; that is
-  handled. If your layout uses AltGr to type `@` or `€`, bind something else — a suppressed
-  Right Alt cannot also type characters.
+- **Right Alt does nothing (if you've configured it as `push_to_talk`).** Some laptops map it
+  to AltGr, which reports as Ctrl+Alt; that is handled. If your layout uses AltGr to type `@`
+  or `€`, bind something else — a suppressed Right Alt cannot also type characters. This is why
+  `right ctrl` is the default instead.
 - **Wake word fires on its own.** Raise `wakeword.threshold` toward 0.9.
 - **Wake word never fires.** Lower it toward 0.7, and check the tray checkbox is on. Run
   `scripts\wakeword_test.py` to see what the decoder actually hears.
