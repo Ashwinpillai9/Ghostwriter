@@ -33,8 +33,12 @@ A tray icon appears; the status pill shows above the taskbar while recording.
 
 **Moving the pill.** Drag it whenever it is visible. Since it hides itself when idle, the tray
 menu has a **Move overlay** item that brings it up on demand — drag it and let go. The position
-is remembered in `overlay_position.json` and clamped to the screen, so it cannot be dragged
-somewhere you can't reach it again.
+is remembered in `overlay_position.json`.
+
+Multiple monitors are supported: drag it to any display. It is clamped to the work area of
+whichever monitor it is nearest, so it cannot be lost off-screen or parked under the taskbar.
+Tk's own `winfo_screenwidth` describes only the primary monitor, so the bounds come from the
+Win32 virtual-desktop metrics instead.
 
 | Hotkey | Action |
 | --- | --- |
