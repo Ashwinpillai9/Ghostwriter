@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 
 import keyboard
@@ -15,6 +16,10 @@ import keyboard
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 0.02
+
+# A second tap within this long after the first tap's release arms the Right Ctrl hold.
+# Anything slower is treated as two unrelated, ordinary keypresses.
+DOUBLE_TAP_WINDOW = 0.4
 
 MODIFIERS = ("ctrl", "shift", "alt", "windows")
 
@@ -43,6 +48,20 @@ UNAMBIGUOUS = {
     "alt gr": "right menu",
     "left alt": "left menu",
 }
+
+
+# Right Ctrl cannot be bound through `add_hotkey` at all: Windows' low-level keyboard hook
+# reports Left and Right Ctrl with the *same* raw scan code (29). The bit that actually tells
+# them apart — the hook's extended-key flag — is used by this library only to compute
+# `event.name`, never folded into the `scan_code` integer that `add_hotkey`, `is_pressed` and
+# suppression all match against. Confirmed directly: `scripts/keyboard_probe.py` shows real
+# Right Ctrl presses as `scan_code=29, name='right ctrl'`, identical in scan_code to Left Ctrl.
+# `key_to_scan_codes("right ctrl")` claims otherwise (57373/57629 alongside 29), but those extra
+# codes are synthesised from a WinAPI table-building pass, not from what a live keypress
+# actually sends — a binding on them is dead on arrival, which is exactly the "still not
+# working" this replaced. `event.name` is the only reliable signal, so this binds Right Ctrl
+# with a raw `keyboard.hook()` and matches on name instead of going through `add_hotkey`.
+RIGHT_CTRL_SPELLINGS = {"right ctrl", "right control", "rctrl"}
 
 
 def resolve_key(name: str) -> str | int:
@@ -125,6 +144,7 @@ class HotkeyManager:
         self._held: set[str] = set()
         self._lock = threading.Lock()
         self._registered: list = []
+        self._hooked: list = []
         self.suppress = True
 
     def register(self, hotkeys: dict) -> None:
@@ -157,6 +177,10 @@ class HotkeyManager:
             )
 
     def _add_hold(self, chord: str, mode: str) -> None:
+        if chord.strip().lower() in RIGHT_CTRL_SPELLINGS:
+            self._bind_right_ctrl_hold(chord, mode)
+            return
+
         key = trigger_key(chord)
 
         def pressed() -> None:
@@ -167,17 +191,69 @@ class HotkeyManager:
                     return  # Key auto-repeat, not a new press.
                 self._held.add(mode)
             self._safe(self.on_press, mode)()
-            threading.Thread(target=self._watch_release, args=(mode, key), daemon=True).start()
+            threading.Thread(target=self._watch_release, args=(mode, [key]), daemon=True).start()
 
         self._registered.append(
             keyboard.add_hotkey(resolve_chord(chord), pressed, suppress=self.suppress)
         )
 
-    def _watch_release(self, mode: str, key: str) -> None:
+    def _bind_right_ctrl_hold(self, chord: str, mode: str) -> None:
+        """Right Ctrl only, matched by `event.name`, and armed by a double-tap rather than a
+        single press.
+
+        Right Ctrl is also the key held for every Ctrl+C/Ctrl+V, so arming on the very first
+        press-down would start dictation on every one of those. Only a *second* tap within
+        DOUBLE_TAP_WINDOW of the first tap's release arms the hold; a lone tap, or an ordinary
+        held Ctrl+<key> combo, is never suppressed and passes straight through to whatever app
+        has focus.
+
+        This hook fires for every keystroke system-wide, so it must return True (pass through)
+        for anything that isn't Right Ctrl, or it would suppress all typing. Only the armed hold
+        is suppressed, controlled by `self.suppress` exactly as `add_hotkey(..., suppress=...)`
+        would be.
+        """
+        armed = False
+        last_up: float | None = None
+
+        def on_event(event) -> bool:
+            nonlocal armed, last_up
+            if event.name != "right ctrl":
+                return True
+
+            if event.event_type == keyboard.KEY_DOWN:
+                if armed:
+                    return not self.suppress  # Key auto-repeat, not a new press.
+                tapped_again = (
+                    last_up is not None and time.monotonic() - last_up <= DOUBLE_TAP_WINDOW
+                )
+                if not tapped_again or not exclusively_pressed(chord):
+                    return True  # A lone tap, or an ordinary Ctrl+<key> press: leave it alone.
+                armed = True
+                with self._lock:
+                    self._held.add(mode)
+                threading.Thread(target=self._safe(self.on_press, mode), daemon=True).start()
+                return not self.suppress
+
+            if event.event_type == keyboard.KEY_UP:
+                if not armed:
+                    last_up = time.monotonic()  # May prime the next tap as a double-tap.
+                    return True
+                armed = False
+                last_up = None  # Require a fresh double-tap before arming again.
+                with self._lock:
+                    self._held.discard(mode)
+                threading.Thread(target=self._safe(self.on_release, mode), daemon=True).start()
+                return not self.suppress
+
+            return True
+
+        self._hooked.append(keyboard.hook(on_event, suppress=True))
+
+    def _watch_release(self, mode: str, keys: list) -> None:
         released = threading.Event()
         while not released.wait(POLL_INTERVAL):
             try:
-                if not keyboard.is_pressed(key):
+                if not any(keyboard.is_pressed(key) for key in keys):
                     break
             except Exception:  # noqa: BLE001 - transient hook errors shouldn't strand the mode
                 break
@@ -202,3 +278,9 @@ class HotkeyManager:
             except Exception:  # noqa: BLE001
                 pass
         self._registered.clear()
+        for handle in self._hooked:
+            try:
+                keyboard.unhook(handle)
+            except Exception:  # noqa: BLE001
+                pass
+        self._hooked.clear()

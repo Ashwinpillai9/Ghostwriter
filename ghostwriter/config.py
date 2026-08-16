@@ -8,7 +8,7 @@ from typing import Any
 
 DEFAULTS: dict[str, Any] = {
     "hotkeys": {
-        "push_to_talk": "right alt",
+        "push_to_talk": "right ctrl",
         "push_to_talk_send": "",
         "toggle": "ctrl+shift+d",
         "cancel": "esc",
