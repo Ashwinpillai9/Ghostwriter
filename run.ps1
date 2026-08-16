@@ -1,4 +1,4 @@
-# Launches Ghostwriter. Use run-hidden.vbs instead if you want no console window.
+# Launches Ghostwriter.
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 & "$PSScriptRoot\.venv\Scripts\python.exe" -m ghostwriter.app @args
