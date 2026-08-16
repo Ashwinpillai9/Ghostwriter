@@ -16,7 +16,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "wakeword": {
         "enabled": True,
-        "backend": "whisper",
         "phrase": "hey ghost",
         "aliases": ["hey goast", "hey gost", "hey ghosts", "hey ghost writer"],
         "threshold": 0.8,
@@ -25,8 +24,6 @@ DEFAULTS: dict[str, Any] = {
         "device": "cpu",
         "compute_type": "int8",
         "cooldown_sec": 2.0,
-        "model_path": "",
-        "fallback_model": "hey_jarvis",
     },
     "endpoint": {
         "silence_timeout_sec": 1.2,

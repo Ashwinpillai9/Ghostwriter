@@ -78,7 +78,6 @@ def matches_phrase(text: str, phrase: str, aliases: list[str], fuzz: float = 0.8
 
 
 class WhisperWakeWordListener:
-    """Drop-in replacement for `WakeWordListener` with the same lifecycle surface."""
 
     def __init__(
         self,
@@ -111,9 +110,7 @@ class WhisperWakeWordListener:
         self._paused = threading.Event()
         self._transcriber = None
         self._vad = None
-        # Mirrors the openWakeWord backend's attributes so the app and tray need no branching.
         self.model_name = phrase.replace(" ", "_")
-        self.using_fallback = False
 
     # --- model -----------------------------------------------------------
 
