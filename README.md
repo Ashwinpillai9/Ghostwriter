@@ -1,8 +1,8 @@
 # Ghostwriter
 
 A local, free Wispr Flow alternative for Windows. Hold a hotkey, talk, release — the text is
-transcribed on your GPU and pasted into whatever window has focus. A second hotkey presses
-Enter afterwards, which is what makes it useful for CLI tools and coding agents.
+transcribed and pasted into whatever window has focus. A second hotkey presses Enter afterwards,
+which is what makes it useful for CLI tools and coding agents.
 
 Nothing leaves the machine and there is no API key: transcription runs on `faster-whisper`
 locally.
@@ -24,79 +24,33 @@ D:\Projects\Ghostwriter\run.ps1    # PowerShell
 D:\Projects\Ghostwriter\run.cmd    # cmd.exe
 ```
 
-Both launchers `cd` to the project directory themselves, so they work from any drive. Running
-`.venv\Scripts\python.exe` by hand requires you to be in the project first — and in cmd,
-switching drives needs `cd /d D:\Projects\Ghostwriter`, since a bare `cd` to another drive
-silently does nothing.
+Run one of the launchers rather than `python` directly — they `cd` into the project first, so
+they work from any drive.
 
 A tray icon appears; the status pill shows above the taskbar while recording.
 
+## Models
+
+Three models, each doing a different job:
+
+| Purpose | Model | Runs on | Config |
+| --- | --- | --- | --- |
+| Dictation (transcribes your speech) | `model.name`, default `large-v3-turbo` (~1.6 GB) | GPU (`cuda`/`float16`), auto-falls back to CPU `int8` | `[model]` |
+| Wake-word check ("hey ghost") | `tiny.en` (~75 MB) | CPU only, always | `[wakeword]` |
+| Voice activity (start/stop detection) | Silero VAD | CPU, bundled with `faster-whisper` | `[endpoint]`, `[wakeword]` |
+
+Drop `model.name` to `small.en` or `base.en` for faster, less accurate dictation. See "GPU
+notes" for the CUDA fallback, and "Wake word" for why that one stays on the CPU.
+
 ## The status pill
 
-A 260×46 rounded pill that glows in the colour of whatever it is doing: blue recording, amber
-transcribing, green pasted, red failed. Starting a recording plays a half-second activation —
-the idle dot blooms, stretches into the 21-bar waveform, and a ripple spreads across the
-display behind it.
+A rounded pill above the taskbar that glows by state: blue recording, amber transcribing, green
+pasted, red failed. Colors, animation timing and the activation wave are all tunable in
+`config.toml` under `[overlay]`, `[overlay.colors]` and `[overlay.wave]` — a bad or missing key
+just logs a warning and falls back to its default, never crashes the render loop.
 
-The recording colour is `overlay.accent` in `config.toml`, and it tints the bars, glow, border,
-bloom and wave together. The design's palette is `#38bdf8` blue (the default), `#ef4444` red,
-`#22c55e` green and `#a855f7` purple. Only recording uses it — amber still means *working*,
-green *done* and red *failed*, so those keep their meaning.
-
-### Tuning it
-
-Every colour and timing lives in `config.toml`, so none of this needs a code edit:
-
-| Where | What |
-| --- | --- |
-| `[overlay]` | `accent`, `frame_ms` (16 ≈ 60fps), `activate_ms`, `rings_ms`, `hold_ms` |
-| `[overlay.colors]` | the per-state colours — `idle`, `transcribing`, `done`, `error`, `moving` |
-| `[overlay.wave]` | `enabled`, `duration_ms`, `wavelength`, `packet_px`, `speed_scale`, `sample_px`, `damping`, `sharpness`, `intensity`, `buffer_width`, `overshoot`, `start_radius`, `flash_ms`, `flash_rings`, `halos`, `cores` |
-
-The ones you are most likely to reach for: **`wavelength`** is the distance between one lit
-crest and the next, **`packet_px`** is how many crests are travelling at once, **`intensity`**
-is peak crest brightness, and **`sharpness`** trades crest width against the dark water around
-it. **`buffer_width`** trades crispness against CPU, roughly linearly, and `enabled = false`
-turns the ripple off entirely while leaving the pill alone.
-
-Anything missing, mistyped or out of range logs one warning at startup and falls back to its
-default for that key alone — a bad colour never reaches the render loop.
-
-None of that is drawn by Tk. A Tk canvas has no antialiasing, no rounded window, no blur and
-no per-element opacity, so each frame is composed with Pillow in `ghostwriter/pill.py` and
-handed to Win32's `UpdateLayeredWindow`, which accepts a full alpha channel. Tk still owns the
-window, the event loop and the input handling. Transparent pixels are click-through, so the
-padding that gives the glow room never swallows a click meant for the window behind it.
-
-**The activation ripple** spreads across whichever display the pill is on, like a droplet
-landing on water: crests a fixed wavelength apart, all travelling outward together at one
-speed, with dark water between them and the amplitude falling away as the rings grow.
-
-It lives in a second, click-through window covering that monitor, so the crests sweep over your
-other applications without interrupting anything — they cannot receive a click at all.
-
-Drawing it at display resolution in Pillow costs ~119 ms a frame (8fps). The trick is that the
-expensive part was never the pixels, it was doing per-pixel work in Python: the wave is drawn
-into a 960px-wide buffer and GDI's `StretchBlt` scales it across the display for ~0.9 ms, with
-the fullscreen `UpdateLayeredWindow` costing another ~0.8 ms.
-
-Nothing is blurred, either. A Gaussian blur is priced by area — ~6.7 ms whatever the radius —
-which capped the buffer resolution. Sampling the wave radially and drawing one thin ring per
-sample is priced by perimeter, and it is also the only way to draw a *waveform* rather than a
-shape: the crest spacing, the troughs and the decay all come out of the sampled profile.
-
-A whole frame, pill and ripple together, measures ~9 ms against the 16 ms a 60fps budget
-allows. The pill's cached chrome is built a frame at a time while it sits idle,
-so the first activation animates as smoothly as the tenth.
-
-**Moving the pill.** Drag it whenever it is visible. Since it hides itself when idle, the tray
-menu has a **Move overlay** item that brings it up on demand — drag it and let go. The position
-is remembered in `overlay_position.json`.
-
-Multiple monitors are supported: drag it to any display. It is clamped to the work area of
-whichever monitor it is nearest, so it cannot be lost off-screen or parked under the taskbar.
-Tk's own `winfo_screenwidth` describes only the primary monitor, so the bounds come from the
-Win32 virtual-desktop metrics instead.
+**Moving it:** drag it whenever it's visible, or use the tray menu's **Move overlay** to bring
+it up on demand. Position is remembered and works across multiple monitors.
 
 | Hotkey | Action |
 | --- | --- |
@@ -104,129 +58,69 @@ Win32 virtual-desktop metrics instead.
 | `Ctrl+Shift+D` | Toggle hands-free recording on/off |
 | `Esc` | Discard the recording in progress |
 
-Right Ctrl is the default because it is a key on a PC keyboard that nothing else claims: no
-editor, shell or browser binds it, so holding it steals nothing. Left Ctrl is untouched.
+Right Ctrl is the default because no editor, shell or browser binds it. A single tap — including
+one held for an ordinary `Ctrl+C`/`Ctrl+V` — is never suppressed and never starts dictation; only
+a **second** tap within 0.4s of the first tap's release arms it. Hold that second tap to record,
+release to stop and paste.
 
-A single Right Ctrl press — a lone tap, or one held for an ordinary `Ctrl+C`/`Ctrl+V` — never
-starts dictation and is never suppressed; it passes through exactly as if Ghostwriter weren't
-running. Only a **second** tap, within 0.4s of the first tap's release, arms it — hold that
-second tap down to record, and release it to stop and paste. Tap Right Ctrl alone at any other
-time and nothing happens.
-
-All of these, plus the model and vocabulary, are configurable in `config.toml`.
+All of this, plus the model and vocabulary, is configurable in `config.toml`.
 
 ## Wake word (hands-free)
 
-Say **"hey ghost"**, talk, and stop — the transcript is pasted without you touching the
-keyboard. It works on a fresh clone with nothing to train and nothing to configure.
+Say **"hey ghost"**, talk, and stop — the transcript is pasted without touching the keyboard.
+Works out of the box, nothing to train.
 
 The utterance ends on whichever comes first:
 
 - **Silence** — `endpoint.silence_timeout_sec` (default 1.2s) of quiet.
-- **The stop key** — `Down` by default, when you want to cut it off immediately. This keeps
-  the audio and transcribes it; `Esc` still discards.
+- **The stop key** — `Down` by default, to cut it off immediately and still transcribe. `Esc`
+  discards instead.
 
-Say the wake word with nothing after it and the recording is dropped silently after
+Say the wake word with nothing after it and the recording drops silently after
 `endpoint.lead_in_sec`.
 
-The tray menu has a **Listening for "…"** checkbox to mute the mic listener instantly, and
+The tray menu has a **Listening for "…"** checkbox to mute the mic listener, and
 `wakeword.enabled = false` turns it off for good.
 
-**If it never stops on its own**, your room is the reason and there is a script for it:
+**If it never stops on its own**, run `scripts\mic_check.py` — it records you silent then
+talking, and tells you either "fine" or the exact `endpoint.vad_threshold` to set. (Detection
+uses a voice-activity model, not raw loudness, because a laptop mic's automatic gain makes a
+fixed volume threshold unreliable.)
 
-```powershell
-.venv\Scripts\python.exe scripts\mic_check.py
-```
+Other tuning knobs in `[endpoint]`: raise `vad_threshold` if a noisy room holds the recording
+open, lower it if you get cut off mid-sentence, and raise `silence_timeout_sec` if it cuts you
+off while you think.
 
-It records you silent, then talking, scores both the way the endpointer does, and tells you
-either "fine" or the exact `endpoint.vad_threshold` to set.
+**Changing the phrase** is a one-line edit — set `wakeword.phrase` and restart, nothing to
+train or download. Add spellings to `wakeword.aliases` if the fuzzy match misses your phrasing;
+run `scripts\wakeword_test.py --phrase "…"` to check. In a quiet room the decoder is idle; in a
+noisy one it wakes at most once every 2s for ~180ms of one core.
 
-Whether you are still speaking is decided by a voice-activity model, not by loudness. That
-matters on a laptop mic array with automatic gain: an empty room there measures a median RMS
-of ~0.024 with peaks past 0.15, so at the old fixed threshold of 0.012, **91% of silent frames
-counted as speech** and the longest quiet stretch in eight seconds was 0.26s against the 1.2s
-needed to stop — the recording simply ran until `max_duration_sec`. Silero scores the same room
-at 0.02 and finds it entirely quiet.
-
-Tuning knobs in `[endpoint]`: raise `vad_threshold` if a noisy room holds the recording open,
-lower it if you get cut off mid-sentence, and raise `silence_timeout_sec` if it cuts you off
-while you think.
-
-### How it detects the phrase without a trained model
-
-The usual approach — openWakeWord — needs a small ONNX classifier trained per phrase, on a GPU
-box with several GB of negative-audio datasets. There is no pretrained "hey ghost", so that
-route would leave everyone saying `hey jarvis` until they spent an hour in Colab.
-
-The default `whisper` backend skips that entirely:
-
-1. **Silero VAD** watches the microphone. It is tiny, runs on the CPU, and already ships
-   inside `faster-whisper` — no extra dependency.
-2. When a burst of speech ends, that ~2.5s of audio goes to **`tiny.en`** (~75 MB, CPU, int8),
-   biased toward the phrase with an initial prompt.
-3. The transcript is matched against `wakeword.phrase` and `wakeword.aliases`, fuzzily, so
-   `"Hey, ghost."` and `"hey ghosts"` both count while `"the ghost writer branch"` does not.
-
-The GPU dictation model is still only touched once the phrase fires. A plain loudness gate was
-the obvious cheaper choice and does not work: on a laptop mic array with automatic gain the
-idle noise floor alone reads as speech, so the decoder would never stop.
-
-**Changing the phrase** is a one-line edit — set `wakeword.phrase` and restart. Nothing to
-train, nothing to download. Add spellings to `wakeword.aliases` if Whisper writes your phrase
-a way the fuzzy match misses; run `scripts\wakeword_test.py --phrase "…"` to see what it does.
-
-**Cost.** In a quiet room the decoder is idle. In a noisy one, or on a mic with aggressive
-auto-gain, it wakes at most once every 2s for about 180 ms of one core — roughly 9% of a
-single core, worst case. Raise `wakeword.vad_threshold` toward 0.8 to cut that down.
-
-### Optional: the openWakeWord backend
-
-If you would rather pay nothing at all in a permanently noisy room, train a classifier and set
-`wakeword.backend = "openwakeword"`. `scripts\train_wakeword.py` writes the training config
-(`models/hey_ghost_training.yaml`); training runs in [the official Colab notebook][notebook]
-on a free T4 in about an hour, mostly dataset downloads. Drop the resulting `.onnx` in
-`models\`, point `wakeword.model_path` at it, and set `wakeword.threshold` back to `0.5` —
-that key means "fuzzy match ratio" for the whisper backend and "model confidence" for this one.
-
-Without a model file this backend falls back to `wakeword.fallback_model` (`hey_jarvis`) and
-says so at startup.
+**Alternative backend:** set `wakeword.backend = "openwakeword"` for a trained ONNX classifier
+instead (zero idle cost, but needs training). `scripts\train_wakeword.py` writes a training
+config for [the official Colab notebook][notebook] (~1hr on a free GPU); point
+`wakeword.model_path` at the resulting `.onnx`. Falls back to `wakeword.fallback_model`
+(`hey_jarvis`) if no model file is set.
 
 [notebook]: https://colab.research.google.com/github/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb
 
-Text is never submitted for you — the transcript is pasted and left at the cursor so you can
-read it and hit Enter yourself. If you later want a hands-free "dictate and send" key, set
-`hotkeys.push_to_talk_send` to a chord (it is empty, and therefore disabled, by default).
+Text is never submitted for you — it's pasted and left at the cursor so you can read it and hit
+Enter yourself. For a hands-free "dictate and send" key, set `hotkeys.push_to_talk_send` to a
+chord (empty/disabled by default).
 
-Hotkeys are matched exclusively: a chord like `Ctrl+Shift+Space` will not also fire a
-`Ctrl+Space` binding, even though `keyboard` on its own would let it. Pick your binding with
-that in mind — `Ctrl+Space` is IntelliSense in VS Code and set-mark in readline-based shells,
-and a bound key is suppressed everywhere while Ghostwriter runs.
-
-Side-specific keys are usually bound by scan code rather than by name, because `keyboard`
-resolves the name `right alt` to *both* Alt keys; binding the name would swallow Left Alt and
-with it `Alt+Tab`. `right alt`, `left alt` and `altgr` are understood in `config.toml`.
-
-`right ctrl` is the exception: Windows' low-level keyboard hook reports Left and Right Ctrl
-with the *same* scan code, so no scan-code binding can tell them apart — confirmed directly
-with `scripts\keyboard_probe.py`. Only the event's *name* distinguishes them, so Right Ctrl is
-matched that way instead of through the usual scan-code path. It also requires the double-tap
-described above, rather than a single press: unlike Right Alt, Right Ctrl is a key you already
-reach for constantly (`Ctrl+C`, `Ctrl+V`, ...), so a single-press binding would start dictation
-on every one of those.
+Hotkeys match exclusively — `Ctrl+Shift+Space` won't also fire a `Ctrl+Space` binding — and a
+bound key is suppressed from every other app while Ghostwriter runs (`hotkeys.suppress = false`
+to hand a clashing key back).
 
 ## How text gets delivered
 
 The transcript goes onto the clipboard, `Ctrl+V` is sent, and the previous clipboard contents
-are restored ~0.35s later. This is far more reliable than simulated typing in terminals and
-handles Unicode correctly.
+are restored ~0.35s later. More reliable than simulated typing and handles Unicode correctly.
 
-Two caveats:
-
-- Only *text* clipboard contents are restored. If you had an image copied, it is lost.
+- Only *text* clipboard contents are restored; a copied image is lost.
 - If pastes occasionally come out empty, raise `output.clipboard_restore_delay`.
-
-Set `output.paste = false` to fall back to character-by-character typing for apps that block
-paste.
+- Set `output.paste = false` to fall back to character-by-character typing for apps that block
+  paste.
 
 ## Post-processing
 
@@ -235,26 +129,18 @@ Raw Whisper output is cleaned with local rules only — no LLM, no added latency
 - Spoken punctuation: "comma", "period", "new line", "open paren", …
 - Filler removal: "um", "uh", "you know", …
 - Capitalisation and trailing punctuation
-- Literal find/replace from `[postprocess.replacements]` — the place to fix CLI names and
-  jargon that Whisper consistently mangles
+- Literal find/replace from `[postprocess.replacements]` — for CLI names Whisper mangles
 
-Words in `model.vocabulary` are fed to Whisper as an initial prompt, which biases decoding
-toward your project's terminology. Prefer this over `replacements` where it works.
+Words in `model.vocabulary` bias decoding toward your terminology as an initial prompt; prefer
+that over `replacements` where it works.
 
 ## GPU notes
 
-This targets an RTX 50-series (Blackwell, sm_120) card, which has two sharp edges:
+Targets an RTX 50-series (Blackwell) card: `model.compute_type` must be `float16` —
+`int8_float16` crashes with `CUBLAS_STATUS_NOT_SUPPORTED` on this architecture.
 
-- `compute_type` must be `float16`. `int8_float16` crashes with
-  `CUBLAS_STATUS_NOT_SUPPORTED` because Blackwell's INT8 tensor cores need padding that
-  CTranslate2 doesn't emit.
-- CTranslate2 loads `cublas64_12.dll` and cuDNN 9 at runtime but bundles neither. They come
-  from the `nvidia-cublas-cu12` / `nvidia-cudnn-cu12` wheels, and `ghostwriter/cuda_paths.py`
-  puts their DLL directories on the search path before the model loads.
-
-If CUDA fails for any reason, `Transcriber._load` falls back to CPU `int8` automatically —
-much slower, but it still works. The model is warmed up with a dummy decode at startup so
-CUDA problems surface immediately rather than on your first dictation.
+If CUDA fails for any reason, it falls back to CPU `int8` automatically (slower, but it works),
+and a startup warmup surfaces GPU problems immediately rather than on your first dictation.
 
 ## Tests
 
@@ -262,47 +148,41 @@ CUDA problems surface immediately rather than on your first dictation.
 .venv\Scripts\python.exe -m pytest tests -q        # rules, endpointing, hotkeys, wake word
 .venv\Scripts\python.exe scripts\smoke_test.py     # model loads and decodes on GPU
 .venv\Scripts\python.exe scripts\tts_test.py       # end-to-end, no microphone needed
-.venv\Scripts\python.exe scripts\wakeword_test.py  # the wake word actually fires, and only
+.venv\Scripts\python.exe scripts\wakeword_test.py  # the wake word actually fires, and only then
 .venv\Scripts\python.exe scripts\mic_check.py      # will dictation stop on its own in your room
 .venv\Scripts\python.exe scripts\keyboard_probe.py # what a real keypress actually sends
 ```
 
-`tts_test.py` synthesizes a phrase with Windows SAPI and transcribes it, so you can verify
-the whole pipeline without speaking. `wakeword_test.py` does the same for the wake word: it
-speaks both phrases that should fire and phrases that should not, and reports each verdict.
+`tts_test.py` and `wakeword_test.py` synthesize speech with Windows SAPI, so you can verify the
+pipeline without talking.
 
 ## Autostart
 
-Put a shortcut to `run.ps1` in `shell:startup`, or use Task Scheduler with "Run at logon" if
-you want it hidden.
+Put a shortcut to `run.ps1` in `shell:startup`, or use Task Scheduler with "Run at logon" for a
+hidden start.
 
 ## Troubleshooting
 
 - **Hotkeys do nothing in an elevated window.** Windows blocks input from a lower-privilege
   process. Run Ghostwriter as administrator too.
 - **A key stops working in other apps while Ghostwriter runs.** Bound keys are suppressed by
-  default, which hides them from everything else. Set `hotkeys.suppress = false` to hand them
-  back, or rebind the key that clashes.
+  default. Set `hotkeys.suppress = false` to hand them back, or rebind the clashing key.
 - **First dictation is slow.** Model load takes a few seconds; recordings made before it
   finishes are queued, not dropped.
-- **Wrong microphone.** Set `audio.device` to part of the device name. It applies to both the
-  wake-word listener and the recorder.
-- **Right Alt does nothing (if you've configured it as `push_to_talk`).** Some laptops map it
-  to AltGr, which reports as Ctrl+Alt; that is handled. If your layout uses AltGr to type `@`
-  or `€`, bind something else — a suppressed Right Alt cannot also type characters. This is why
-  `right ctrl` is the default instead.
-- **Right Ctrl does nothing.** Remember it needs a double-tap, then hold the second tap — a
-  single press is deliberately ignored (see "Hotkeys" above). If a genuine double-tap-and-hold
-  still does nothing, run `scripts\keyboard_probe.py` and press Right Ctrl a few times — a real
-  press shows `name='right ctrl'` even though `scan_code` reads `29`, same as Left Ctrl; that's
-  expected. If it instead prints `name='ctrl'` or `name='left ctrl'` for a press you're sure was
-  the right-hand key, something upstream (a keyboard-utility app like Razer Synapse or Logitech
-  Options, or a laptop's own Fn-key software) is remapping it before Windows sees it — check
-  there. If no event appears at all, the same remapping is the likely cause.
+- **Wrong microphone.** Set `audio.device` to part of the device name (applies to both the
+  wake-word listener and the recorder).
+- **Right Alt does nothing** (if configured as `push_to_talk`). Some laptops map it to AltGr;
+  that's handled, but a suppressed Right Alt still can't type `@`/`€` on those layouts — bind
+  something else. This is why `right ctrl` is the default instead.
+- **Right Ctrl does nothing.** It needs a double-tap, then hold the second tap — a single press
+  is deliberately ignored. If a genuine double-tap-and-hold still does nothing, run
+  `scripts\keyboard_probe.py` and press it a few times; if it prints `name='ctrl'` or
+  `name='left ctrl'` for a press you're sure was the right-hand key, a keyboard-utility app
+  (Razer Synapse, Logitech Options, a laptop's Fn-key software) is remapping it before Windows
+  sees it — check there.
 - **Wake word fires on its own.** Raise `wakeword.threshold` toward 0.9.
-- **Wake word never fires.** Lower it toward 0.7, and check the tray checkbox is on. Run
+- **Wake word never fires.** Lower it toward 0.7, check the tray checkbox is on, and run
   `scripts\wakeword_test.py` to see what the decoder actually hears.
-- **Wake word listener uses noticeable CPU.** Your mic is never quiet enough for the VAD to
-  close. Raise `wakeword.vad_threshold` toward 0.8.
-- **It cuts me off mid-sentence.** Raise `endpoint.silence_timeout_sec`, or raise
+- **Wake word listener uses noticeable CPU.** Raise `wakeword.vad_threshold` toward 0.8.
+- **It cuts me off mid-sentence.** Raise `endpoint.silence_timeout_sec`, or
   `endpoint.silence_threshold` if room noise is masking your pauses.
