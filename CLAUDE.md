@@ -9,9 +9,17 @@ Every feature, bug fix or improvement starts on its own branch — never commit 
 1. `git checkout -b <type>/<short-description>` before the first edit. Types: `feat/`, `fix/`,
    `chore/`.
 2. Commit as usual. The branch is pushed automatically (see below).
-3. Open a PR with `gh pr create` when the work is done and tested.
-4. **Wait for the user's approval before merging.** Once they approve, merge the PR
+3. **Stop there and hand the branch to the user to test.** Every change ends with concrete
+   testing steps: the exact command to run, what to do once it is running, and what a correct
+   result looks like — including what to check that automated tests cannot cover. Never end a
+   change with just "tests pass".
+4. **Do not run `gh pr create` until the user has tested the branch and asked for a PR.**
+   Passing tests are not approval; neither is "the work looks done". Wait to be told.
+5. Once they approve the PR and are ready to land it, merge it
    (`gh pr merge --squash --delete-branch`) and return to `main`.
+
+Steps 3–5 are two separate gates, and the user opens each one. Automated checks never
+substitute for either.
 
 Two hooks in `.claude/settings.json` enforce the mechanical half of this:
 
@@ -21,8 +29,8 @@ Two hooks in `.claude/settings.json` enforce the mechanical half of this:
   is ahead of its remote, setting the upstream on first push. It never pushes a protected
   branch, and skips a diverged branch rather than force-pushing over someone else's work.
 
-Neither hook can decide *when* a PR should merge — that is the approval step above, and it
-stays a judgement call.
+Neither hook can decide *when* a PR should be opened or merged. Both of those are the user's
+calls, above, and no hook enforces them.
 
 ## Testing
 
@@ -38,6 +46,20 @@ hotkeys, the microphone or the overlay.
 
 ## Things that bite
 
+- **Tk draws none of the pill.** Frames are composed with Pillow (`ghostwriter/pill.py`) and
+  pushed via `UpdateLayeredWindow`; Tk only supplies the window, the loop and the input. The
+  bitmap must be premultiplied BGRA (`tobytes("raw", "BGRa")`) or every antialiased edge picks
+  up a bright halo.
+- **Blur cost is priced by area.** The pill's chrome is rendered on a small tile and pasted in;
+  blurring it across a larger surface cost ~44 ms a frame. Keep an eye on the frame budget when
+  touching `pill.py`.
+- **Overlay look and timing belong in `style.py`, not in constants.** `OverlayStyle`/`WaveStyle`
+  are built from `config.toml` and validated per key, so a typo warns once at startup instead
+  of raising inside the render loop. Add new knobs there rather than as module constants.
+- **Never draw full-screen in Pillow.** The activation wave is drawn into a 960px buffer and
+  scaled up by GDI's `StretchBlt` (~0.9 ms). Doing the same work at display resolution in
+  Python is ~119 ms a frame, and it blocks the Tk loop, so the drag and status updates freeze
+  with it.
 - **Tk's `winfo_screenwidth` is the primary monitor only.** Multi-monitor positioning has to go
   through the Win32 virtual-desktop metrics; see `ghostwriter/overlay.py`.
 - **`winfo_x`/`winfo_y` go stale while a window is withdrawn.** The overlay tracks its own
