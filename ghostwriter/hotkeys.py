@@ -125,8 +125,17 @@ class HotkeyManager:
         self._held: set[str] = set()
         self._lock = threading.Lock()
         self._registered: list = []
+        self.suppress = True
 
     def register(self, hotkeys: dict) -> None:
+        """Bind the configured chords.
+
+        `hotkeys.suppress` decides whether a bound key still reaches the focused app. Suppressed
+        is the better default — you do not want Right Alt opening menus while you dictate — but
+        it takes the key away from every other program for as long as Ghostwriter runs, so it
+        has to be switchable when that fights with something else.
+        """
+        self.suppress = bool(hotkeys.get("suppress", True))
         for mode, key in (("paste", "push_to_talk"), ("send", "push_to_talk_send")):
             chord = hotkeys.get(key)
             if chord:
@@ -136,7 +145,7 @@ class HotkeyManager:
         if toggle:
             self._registered.append(
                 keyboard.add_hotkey(
-                    resolve_chord(toggle), self._safe(self.on_toggle), suppress=True
+                    resolve_chord(toggle), self._safe(self.on_toggle), suppress=self.suppress
                 )
             )
 
@@ -161,7 +170,7 @@ class HotkeyManager:
             threading.Thread(target=self._watch_release, args=(mode, key), daemon=True).start()
 
         self._registered.append(
-            keyboard.add_hotkey(resolve_chord(chord), pressed, suppress=True)
+            keyboard.add_hotkey(resolve_chord(chord), pressed, suppress=self.suppress)
         )
 
     def _watch_release(self, mode: str, key: str) -> None:

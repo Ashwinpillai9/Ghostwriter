@@ -66,5 +66,10 @@ hotkeys, the microphone or the overlay.
   position instead.
 - **`keyboard` resolves `"right alt"` to both Alt scan codes.** Side-specific keys are bound by
   scan code, or a suppressed binding swallows Left Alt and `Alt+Tab` with it.
-- **A loudness gate cannot detect speech on an auto-gain laptop mic.** The wake word uses
-  Silero VAD; see the comment at the top of `ghostwriter/wakeword_whisper.py`.
+- **A loudness gate cannot detect speech on an auto-gain laptop mic.** Both the wake word and
+  the endpointer use Silero VAD; see the comments atop `wakeword_whisper.py` and `endpoint.py`.
+  `scripts/mic_check.py` measures a room and prints the threshold to use.
+- **Silero's LSTM state is zeroed on every call.** Score a short window and a silent room reads
+  0.8; give it a second of audio and judge only the last quarter and it reads 0.02.
+- **Speech is continuous, noise is spiky.** Use the median over a window, never the max — about
+  1% of frames spike in a quiet room and a max lets any one of them win.

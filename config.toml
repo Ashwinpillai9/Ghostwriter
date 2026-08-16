@@ -12,6 +12,10 @@ push_to_talk_send = ""
 toggle = "ctrl+shift+d"
 # Cancel an in-progress recording without pasting anything.
 cancel = "esc"
+# Whether a bound key is hidden from the app you are working in. True stops Right Alt opening
+# menus while you dictate, but takes those keys away from every other program while Ghostwriter
+# runs. Set false if a binding here is fighting with a shortcut you need.
+suppress = true
 
 [wakeword]
 # Say the wake phrase to start dictating without touching the keyboard.
@@ -55,12 +59,21 @@ fallback_model = "hey_jarvis"
 # How a hands-free utterance ends. Only applies to wake-word dictation.
 # Stop after this much silence.
 silence_timeout_sec = 1.2
-# RMS below this counts as silence. Raise in a noisy room.
+# How sure the voice-activity detector must be that it is hearing speech, 0..1. This is what
+# decides "still talking" — raise it if a noisy room keeps the recording open, lower it if you
+# get cut off mid-sentence. Run scripts/mic_check.py to see what your room actually measures.
+vad_threshold = 0.5
+# Fallback only, used if the voice-activity model cannot load: RMS below this counts as
+# silence. A fixed loudness threshold is unreliable on a mic with automatic gain.
 silence_threshold = 0.012
 # Ignore blips shorter than this when deciding that speech has started.
 min_speech_sec = 0.4
 # If you never start talking after the wake word, give up after this long.
 lead_in_sec = 2.0
+# Once you've started talking, keep recording for at least this long before a pause is allowed
+# to end it — a pause to think early in a long thought won't cut it short. Doesn't delay
+# no_speech (saying nothing at all) or the stop key, only the silence-based ending.
+min_recording_sec = 4.0
 # Hard cap on a single hands-free utterance.
 max_duration_sec = 60.0
 # Press this key to stop and transcribe immediately instead of waiting for silence.

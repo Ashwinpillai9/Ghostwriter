@@ -127,8 +127,25 @@ Say the wake word with nothing after it and the recording is dropped silently af
 The tray menu has a **Listening for "…"** checkbox to mute the mic listener instantly, and
 `wakeword.enabled = false` turns it off for good.
 
-Tuning knobs in `[endpoint]`: raise `silence_threshold` in a noisy room, raise
-`silence_timeout_sec` if it cuts you off while you think.
+**If it never stops on its own**, your room is the reason and there is a script for it:
+
+```powershell
+.venv\Scripts\python.exe scripts\mic_check.py
+```
+
+It records you silent, then talking, scores both the way the endpointer does, and tells you
+either "fine" or the exact `endpoint.vad_threshold` to set.
+
+Whether you are still speaking is decided by a voice-activity model, not by loudness. That
+matters on a laptop mic array with automatic gain: an empty room there measures a median RMS
+of ~0.024 with peaks past 0.15, so at the old fixed threshold of 0.012, **91% of silent frames
+counted as speech** and the longest quiet stretch in eight seconds was 0.26s against the 1.2s
+needed to stop — the recording simply ran until `max_duration_sec`. Silero scores the same room
+at 0.02 and finds it entirely quiet.
+
+Tuning knobs in `[endpoint]`: raise `vad_threshold` if a noisy room holds the recording open,
+lower it if you get cut off mid-sentence, and raise `silence_timeout_sec` if it cuts you off
+while you think.
 
 ### How it detects the phrase without a trained model
 
@@ -233,6 +250,7 @@ CUDA problems surface immediately rather than on your first dictation.
 .venv\Scripts\python.exe scripts\smoke_test.py     # model loads and decodes on GPU
 .venv\Scripts\python.exe scripts\tts_test.py       # end-to-end, no microphone needed
 .venv\Scripts\python.exe scripts\wakeword_test.py  # the wake word actually fires, and only
+.venv\Scripts\python.exe scripts\mic_check.py      # will dictation stop on its own in your room
 ```
 
 `tts_test.py` synthesizes a phrase with Windows SAPI and transcribes it, so you can verify
@@ -248,6 +266,9 @@ you want it hidden.
 
 - **Hotkeys do nothing in an elevated window.** Windows blocks input from a lower-privilege
   process. Run Ghostwriter as administrator too.
+- **A key stops working in other apps while Ghostwriter runs.** Bound keys are suppressed by
+  default, which hides them from everything else. Set `hotkeys.suppress = false` to hand them
+  back, or rebind the key that clashes.
 - **First dictation is slow.** Model load takes a few seconds; recordings made before it
   finishes are queued, not dropped.
 - **Wrong microphone.** Set `audio.device` to part of the device name. It applies to both the
