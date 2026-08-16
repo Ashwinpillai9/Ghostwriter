@@ -73,7 +73,9 @@ hotkeys, the microphone or the overlay.
   Left Ctrl. `add_hotkey` and `is_pressed` match on that same integer, so no scan-code spec can
   bind Right Ctrl alone. Only `event.name` tells them apart (it uses the hook's extended-key
   flag internally), so `hotkeys._bind_right_ctrl_hold` uses a raw `keyboard.hook()` and matches
-  on name instead of going through `add_hotkey`.
+  on name instead of going through `add_hotkey`. It also arms only on a double-tap-then-hold,
+  not a single press — Right Ctrl is the key held for every `Ctrl+C`/`Ctrl+V`, and a single-tap
+  binding fired dictation on all of them.
 - **A loudness gate cannot detect speech on an auto-gain laptop mic.** Both the wake word and
   the endpointer use Silero VAD; see the comments atop `wakeword_whisper.py` and `endpoint.py`.
   `scripts/mic_check.py` measures a room and prints the threshold to use.

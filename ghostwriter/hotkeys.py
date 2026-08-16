@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 
 import keyboard
@@ -15,6 +16,10 @@ import keyboard
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 0.02
+
+# A second tap within this long after the first tap's release arms the Right Ctrl hold.
+# Anything slower is treated as two unrelated, ordinary keypresses.
+DOUBLE_TAP_WINDOW = 0.4
 
 MODIFIERS = ("ctrl", "shift", "alt", "windows")
 
@@ -193,34 +198,54 @@ class HotkeyManager:
         )
 
     def _bind_right_ctrl_hold(self, chord: str, mode: str) -> None:
-        """Right Ctrl only, matched by `event.name` rather than `add_hotkey`'s scan codes.
+        """Right Ctrl only, matched by `event.name`, and armed by a double-tap rather than a
+        single press.
+
+        Right Ctrl is also the key held for every Ctrl+C/Ctrl+V, so arming on the very first
+        press-down would start dictation on every one of those. Only a *second* tap within
+        DOUBLE_TAP_WINDOW of the first tap's release arms the hold; a lone tap, or an ordinary
+        held Ctrl+<key> combo, is never suppressed and passes straight through to whatever app
+        has focus.
 
         This hook fires for every keystroke system-wide, so it must return True (pass through)
-        for anything that isn't Right Ctrl, or it would suppress all typing. Only Right Ctrl
-        events are acted on, and only they get suppressed, controlled by `self.suppress` exactly
-        as `add_hotkey(..., suppress=...)` would.
+        for anything that isn't Right Ctrl, or it would suppress all typing. Only the armed hold
+        is suppressed, controlled by `self.suppress` exactly as `add_hotkey(..., suppress=...)`
+        would be.
         """
+        armed = False
+        last_up: float | None = None
 
         def on_event(event) -> bool:
+            nonlocal armed, last_up
             if event.name != "right ctrl":
                 return True
+
             if event.event_type == keyboard.KEY_DOWN:
-                if not exclusively_pressed(chord):
-                    return not self.suppress
+                if armed:
+                    return not self.suppress  # Key auto-repeat, not a new press.
+                tapped_again = (
+                    last_up is not None and time.monotonic() - last_up <= DOUBLE_TAP_WINDOW
+                )
+                if not tapped_again or not exclusively_pressed(chord):
+                    return True  # A lone tap, or an ordinary Ctrl+<key> press: leave it alone.
+                armed = True
                 with self._lock:
-                    if mode in self._held:
-                        return not self.suppress  # Key auto-repeat, not a new press.
                     self._held.add(mode)
-                threading.Thread(
-                    target=self._safe(self.on_press, mode), daemon=True
-                ).start()
-            elif event.event_type == keyboard.KEY_UP:
+                threading.Thread(target=self._safe(self.on_press, mode), daemon=True).start()
+                return not self.suppress
+
+            if event.event_type == keyboard.KEY_UP:
+                if not armed:
+                    last_up = time.monotonic()  # May prime the next tap as a double-tap.
+                    return True
+                armed = False
+                last_up = None  # Require a fresh double-tap before arming again.
                 with self._lock:
                     self._held.discard(mode)
-                threading.Thread(
-                    target=self._safe(self.on_release, mode), daemon=True
-                ).start()
-            return not self.suppress
+                threading.Thread(target=self._safe(self.on_release, mode), daemon=True).start()
+                return not self.suppress
+
+            return True
 
         self._hooked.append(keyboard.hook(on_event, suppress=True))
 

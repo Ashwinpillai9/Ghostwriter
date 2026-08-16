@@ -1,4 +1,5 @@
 import threading
+import time
 
 import keyboard as real_keyboard
 
@@ -56,34 +57,87 @@ def test_right_ctrl_hook_ignores_events_for_other_keys(monkeypatch):
     assert on_event(event) is True  # pass through untouched
 
 
-def test_right_ctrl_hook_press_and_release_fire_by_name(monkeypatch):
+# Right Ctrl also arms on a double-tap-then-hold rather than a single press: it's the key held
+# for every Ctrl+C/Ctrl+V, so arming on the first press-down would start dictation on every one
+# of those. Only a second tap within DOUBLE_TAP_WINDOW of the first tap's release counts.
+
+
+def _build_manager(monkeypatch, on_press=None, on_release=None):
+    fake = FakeKeyboard()
+    monkeypatch.setattr(hotkeys, "keyboard", fake)
+    manager = hotkeys.HotkeyManager(
+        on_press or (lambda m: None), on_release or (lambda m: None), lambda: None, lambda: None
+    )
+    manager.register({"push_to_talk": "right ctrl", "toggle": "ctrl+shift+d"})
+    return fake, fake.hooks[0][0]
+
+
+def test_right_ctrl_single_tap_never_arms_or_suppresses(monkeypatch):
+    events = []
+    _fake, on_event = _build_manager(monkeypatch, on_press=lambda m: events.append(m))
+
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
+    time.sleep(0.05)
+    assert events == [], "a lone tap must never start dictation"
+
+
+def test_right_ctrl_double_tap_then_hold_arms_and_suppresses(monkeypatch):
     events = []
     done = threading.Event()
-
-    def on_press(mode):
-        events.append(("press", mode))
 
     def on_release(mode):
         events.append(("release", mode))
         done.set()
 
-    fake = FakeKeyboard()
-    monkeypatch.setattr(hotkeys, "keyboard", fake)
-    manager = hotkeys.HotkeyManager(on_press, on_release, lambda: None, lambda: None)
-    manager.register({"push_to_talk": "right ctrl", "toggle": "ctrl+shift+d"})
-    on_event = fake.hooks[0][0]
+    _fake, on_event = _build_manager(
+        monkeypatch, on_press=lambda m: events.append(("press", m)), on_release=on_release
+    )
 
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is False  # suppressed
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True  # tap 1: untouched
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is False  # tap 2: arms, suppressed
     assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is False
+
     assert done.wait(1.0), "release callback never fired"
     assert ("press", "paste") in events
     assert ("release", "paste") in events
 
 
+def test_right_ctrl_second_tap_too_slow_does_not_arm(monkeypatch):
+    monkeypatch.setattr(hotkeys, "DOUBLE_TAP_WINDOW", 0.01)
+    events = []
+    _fake, on_event = _build_manager(monkeypatch, on_press=lambda m: events.append(m))
+
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
+    time.sleep(0.05)  # well past the (shrunk) window
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True  # treated as tap 1
+    assert events == []
+
+
+def test_right_ctrl_requires_a_fresh_double_tap_after_release(monkeypatch):
+    events = []
+    _fake, on_event = _build_manager(monkeypatch, on_press=lambda m: events.append(m))
+
+    # A full double-tap-hold-release cycle...
+    on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN))
+    on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP))
+    on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN))
+    on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP))
+    assert events == ["paste"]
+
+    # ...then a single immediate tap must not re-arm on its own.
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
+    assert events == ["paste"]
+
+
 def test_right_ctrl_hook_respects_suppress_false(monkeypatch):
     fake = register_with(monkeypatch, push_to_talk="right ctrl", suppress=False)
     on_event = fake.hooks[0][0]
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
+    on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN))
+    on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP))
+    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True  # arms, not suppressed
     assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
 
 

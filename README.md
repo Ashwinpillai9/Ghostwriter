@@ -100,12 +100,18 @@ Win32 virtual-desktop metrics instead.
 
 | Hotkey | Action |
 | --- | --- |
-| Hold `Right Ctrl` | Dictate, paste on release — review it, then press Enter yourself |
+| Double-tap `Right Ctrl`, hold the second tap | Dictate, paste on release — review it, then press Enter yourself |
 | `Ctrl+Shift+D` | Toggle hands-free recording on/off |
 | `Esc` | Discard the recording in progress |
 
 Right Ctrl is the default because it is a key on a PC keyboard that nothing else claims: no
 editor, shell or browser binds it, so holding it steals nothing. Left Ctrl is untouched.
+
+A single Right Ctrl press — a lone tap, or one held for an ordinary `Ctrl+C`/`Ctrl+V` — never
+starts dictation and is never suppressed; it passes through exactly as if Ghostwriter weren't
+running. Only a **second** tap, within 0.4s of the first tap's release, arms it — hold that
+second tap down to record, and release it to stop and paste. Tap Right Ctrl alone at any other
+time and nothing happens.
 
 All of these, plus the model and vocabulary, are configurable in `config.toml`.
 
@@ -203,7 +209,10 @@ with it `Alt+Tab`. `right alt`, `left alt` and `altgr` are understood in `config
 `right ctrl` is the exception: Windows' low-level keyboard hook reports Left and Right Ctrl
 with the *same* scan code, so no scan-code binding can tell them apart — confirmed directly
 with `scripts\keyboard_probe.py`. Only the event's *name* distinguishes them, so Right Ctrl is
-matched that way instead of through the usual scan-code path.
+matched that way instead of through the usual scan-code path. It also requires the double-tap
+described above, rather than a single press: unlike Right Alt, Right Ctrl is a key you already
+reach for constantly (`Ctrl+C`, `Ctrl+V`, ...), so a single-press binding would start dictation
+on every one of those.
 
 ## How text gets delivered
 
@@ -282,14 +291,14 @@ you want it hidden.
   to AltGr, which reports as Ctrl+Alt; that is handled. If your layout uses AltGr to type `@`
   or `€`, bind something else — a suppressed Right Alt cannot also type characters. This is why
   `right ctrl` is the default instead.
-- **Right Ctrl does nothing.** Right Ctrl is matched by name, not scan code (see "Hotkeys"
-  above), so this should be rare. Run `scripts\keyboard_probe.py` and press Right Ctrl a few
-  times — a real press shows `name='right ctrl'` even though `scan_code` reads `29`, same as
-  Left Ctrl; that's expected. If it instead prints `name='ctrl'` or `name='left ctrl'` for a
-  press you're sure was the right-hand key, something upstream (a keyboard-utility app like
-  Razer Synapse or Logitech Options, or a laptop's own Fn-key software) is remapping it before
-  Windows sees it — check there. If no event appears at all, the same remapping is the likely
-  cause.
+- **Right Ctrl does nothing.** Remember it needs a double-tap, then hold the second tap — a
+  single press is deliberately ignored (see "Hotkeys" above). If a genuine double-tap-and-hold
+  still does nothing, run `scripts\keyboard_probe.py` and press Right Ctrl a few times — a real
+  press shows `name='right ctrl'` even though `scan_code` reads `29`, same as Left Ctrl; that's
+  expected. If it instead prints `name='ctrl'` or `name='left ctrl'` for a press you're sure was
+  the right-hand key, something upstream (a keyboard-utility app like Razer Synapse or Logitech
+  Options, or a laptop's own Fn-key software) is remapping it before Windows sees it — check
+  there. If no event appears at all, the same remapping is the likely cause.
 - **Wake word fires on its own.** Raise `wakeword.threshold` toward 0.9.
 - **Wake word never fires.** Lower it toward 0.7, and check the tray checkbox is on. Run
   `scripts\wakeword_test.py` to see what the decoder actually hears.
