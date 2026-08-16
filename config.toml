@@ -20,40 +20,26 @@ suppress = true
 [wakeword]
 # Say the wake phrase to start dictating without touching the keyboard.
 enabled = true
-# "whisper"      - works out of the box with any phrase, nothing to train. An energy gate
-#                  watches the mic for free and only decodes short speech bursts.
-# "openwakeword" - the classic tiny-ONNX detector. Lower CPU when you are talking a lot, but
-#                  it needs a model trained per phrase (see README).
-backend = "whisper"
 # The phrase itself. Change it to anything; no retraining, just restart.
 phrase = "hey ghost"
 # Extra spellings to accept. Whisper writes what it hears, and short invented names come back
 # spelled several ways.
 aliases = ["hey goast", "hey gost", "hey ghosts", "hey ghost writer"]
-# whisper backend: how close the transcript must be to the phrase, 0..1. Lower if it misses
-# you, raise if it fires on similar-sounding speech.
-# openwakeword backend: the model's confidence threshold, where 0.5 is the usual starting point.
+# How close the transcript must be to the phrase, 0..1. Lower if it misses you, raise if it
+# fires on similar-sounding speech.
 threshold = 0.8
-# whisper backend: how sure the voice-activity detector must be that a sound is speech before
-# it is worth decoding, 0..1. Raise it if a noisy room keeps the decoder busy.
+# How sure the voice-activity detector must be that a sound is speech before it is worth
+# decoding, 0..1. Raise it if a noisy room keeps the decoder busy.
 vad_threshold = 0.5
 # Ignore further detections for this long after one fires.
 cooldown_sec = 2.0
 
-# --- whisper backend ---
 # Wake-word decoding model. Keep it small; this is a keyword check, not dictation.
 model = "tiny.en"
 # "cpu" leaves the GPU entirely to dictation. "cuda" + "float16" if you would rather not
 # spend the CPU.
 device = "cpu"
 compute_type = "int8"
-
-# --- openwakeword backend ---
-# Path to a trained .onnx. The filename doubles as the phrase name shown in the UI.
-model_path = ""
-# Used when model_path is missing. Pretrained options: hey_jarvis, alexa, hey_mycroft,
-# hey_rhasspy, timer, weather.
-fallback_model = "hey_jarvis"
 
 [endpoint]
 # How a hands-free utterance ends. Only applies to wake-word dictation.

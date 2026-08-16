@@ -20,7 +20,6 @@ from .hotkeys import HotkeyManager
 from .overlay import Overlay
 from .style import OverlayStyle
 from .transcribe import Transcriber
-from .wakeword import WakeWordListener
 from .wakeword_whisper import WhisperWakeWordListener
 
 log = logging.getLogger("Ghostwriter")
@@ -78,16 +77,7 @@ class App:
         )
 
     def _build_wake(self):
-        """Pick the wake-word backend. The default needs no trained model."""
-        if self.cfg.get("wakeword.backend", "whisper") == "openwakeword":
-            return WakeWordListener(
-                on_detect=self.on_wake,
-                model_path=self.cfg.get("wakeword.model_path", ""),
-                fallback_model=self.cfg.get("wakeword.fallback_model", "hey_jarvis"),
-                threshold=self.cfg.get("wakeword.threshold", 0.5),
-                cooldown_sec=self.cfg.get("wakeword.cooldown_sec", 2.0),
-                device=self.cfg.get("audio.device", ""),
-            )
+        """Wake-word listener. Answers to any phrase; nothing to train."""
         return WhisperWakeWordListener(
             on_detect=self.on_wake,
             phrase=self.cfg.get("wakeword.phrase", "hey ghost"),
@@ -368,11 +358,6 @@ class App:
                 f'  Say "{self.wake_phrase()}" to dictate hands-free '
                 f"(stop with silence or {self.cfg.get('endpoint.stop_key')})"
             )
-            if self.wake.using_fallback:
-                lines.append(
-                    "  NOTE: openWakeWord backend is using its pretrained fallback phrase - "
-                    "set wakeword.backend = \"whisper\" for the real phrase, no training needed"
-                )
         lines += [
             f"  {self.cfg.get('hotkeys.toggle')} toggles hands-free mode",
             f"  {self.cfg.get('hotkeys.cancel')} cancels a recording",

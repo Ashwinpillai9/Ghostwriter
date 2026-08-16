@@ -96,14 +96,6 @@ train or download. Add spellings to `wakeword.aliases` if the fuzzy match misses
 run `scripts\wakeword_test.py --phrase "…"` to check. In a quiet room the decoder is idle; in a
 noisy one it wakes at most once every 2s for ~180ms of one core.
 
-**Alternative backend:** set `wakeword.backend = "openwakeword"` for a trained ONNX classifier
-instead (zero idle cost, but needs training). `scripts\train_wakeword.py` writes a training
-config for [the official Colab notebook][notebook] (~1hr on a free GPU); point
-`wakeword.model_path` at the resulting `.onnx`. Falls back to `wakeword.fallback_model`
-(`hey_jarvis`) if no model file is set.
-
-[notebook]: https://colab.research.google.com/github/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb
-
 Text is never submitted for you — it's pasted and left at the cursor so you can read it and hit
 Enter yourself. For a hands-free "dictate and send" key, set `hotkeys.push_to_talk_send` to a
 chord (empty/disabled by default).

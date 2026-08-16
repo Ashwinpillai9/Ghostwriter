@@ -31,8 +31,7 @@ class FakeWake:
     def __init__(self):
         self.paused = 0
         self.resumed = 0
-        self.model_name = "hey_jarvis"
-        self.using_fallback = True
+        self.model_name = "hey_ghost"
         self.listening = True
 
     def pause(self):
