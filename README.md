@@ -250,6 +250,7 @@ CUDA problems surface immediately rather than on your first dictation.
 .venv\Scripts\python.exe scripts\tts_test.py       # end-to-end, no microphone needed
 .venv\Scripts\python.exe scripts\wakeword_test.py  # the wake word actually fires, and only
 .venv\Scripts\python.exe scripts\mic_check.py      # will dictation stop on its own in your room
+.venv\Scripts\python.exe scripts\keyboard_probe.py # what a real keypress actually sends
 ```
 
 `tts_test.py` synthesizes a phrase with Windows SAPI and transcribes it, so you can verify
@@ -276,6 +277,12 @@ you want it hidden.
   to AltGr, which reports as Ctrl+Alt; that is handled. If your layout uses AltGr to type `@`
   or `€`, bind something else — a suppressed Right Alt cannot also type characters. This is why
   `right ctrl` is the default instead.
+- **Right Ctrl does nothing.** Run `scripts\keyboard_probe.py`, press Right Ctrl a few times,
+  and check the `scan_code` it prints. It should read `57373` (occasionally `57629`) — if it
+  reads `29` instead, this machine is reporting your Right Ctrl key as Left Ctrl at the driver
+  level, which no software binding can fix; try a different key. If it stays completely silent
+  with no event at all, the key may be remapped by a keyboard-utility app (Razer Synapse,
+  Logitech Options, a laptop's own Fn-key software) — check there first.
 - **Wake word fires on its own.** Raise `wakeword.threshold` toward 0.9.
 - **Wake word never fires.** Lower it toward 0.7, and check the tray checkbox is on. Run
   `scripts\wakeword_test.py` to see what the decoder actually hears.

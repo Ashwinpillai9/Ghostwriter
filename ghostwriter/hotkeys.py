@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 from collections.abc import Callable
@@ -43,6 +44,26 @@ UNAMBIGUOUS = {
     "alt gr": "right menu",
     "left alt": "left menu",
 }
+
+
+# `keyboard`'s Windows name table conflates "right ctrl" with plain Ctrl: on this library,
+# key_to_scan_codes("right ctrl") returns scan code 29 alongside the codes unique to the right
+# key — but 29 is also Left Ctrl's own code. Binding the name directly with suppress=True would
+# therefore suppress Left Ctrl too, and pressing *left* Ctrl alone would fire this hotkey. This
+# is unrelated to the AltGr problem right Alt has (there is no event-swallowing here) — it is
+# purely a stale/ambiguous entry in the library's own lookup table.
+RIGHT_CTRL_SPELLINGS = {"right ctrl", "right control", "rctrl"}
+
+
+@functools.lru_cache(maxsize=1)
+def _right_ctrl_codes() -> tuple[int, ...]:
+    """Scan codes unique to a hardware Right Ctrl press, with Left Ctrl's own code excluded."""
+    try:
+        right = set(keyboard.key_to_scan_codes("right ctrl"))
+        left = set(keyboard.key_to_scan_codes("left ctrl"))
+    except Exception:  # noqa: BLE001 - unknown on this layout; caller falls back to the name
+        return ()
+    return tuple(sorted(right - left))
 
 
 def resolve_key(name: str) -> str | int:
@@ -157,7 +178,17 @@ class HotkeyManager:
             )
 
     def _add_hold(self, chord: str, mode: str) -> None:
-        key = trigger_key(chord)
+        keys: list[str | int] = [trigger_key(chord)]
+        hotkey_spec: str | tuple = resolve_chord(chord)
+
+        # A bare right-ctrl chord binds to its own curated scan codes instead of the ambiguous
+        # name (see RIGHT_CTRL_SPELLINGS above), so release-watching has to poll those same
+        # codes rather than the name, which would falsely read Left Ctrl as "still held".
+        if chord.strip().lower() in RIGHT_CTRL_SPELLINGS:
+            codes = _right_ctrl_codes()
+            if codes:
+                keys = list(codes)
+                hotkey_spec = (codes,)
 
         def pressed() -> None:
             if not exclusively_pressed(chord):
@@ -167,17 +198,17 @@ class HotkeyManager:
                     return  # Key auto-repeat, not a new press.
                 self._held.add(mode)
             self._safe(self.on_press, mode)()
-            threading.Thread(target=self._watch_release, args=(mode, key), daemon=True).start()
+            threading.Thread(target=self._watch_release, args=(mode, keys), daemon=True).start()
 
         self._registered.append(
-            keyboard.add_hotkey(resolve_chord(chord), pressed, suppress=self.suppress)
+            keyboard.add_hotkey(hotkey_spec, pressed, suppress=self.suppress)
         )
 
-    def _watch_release(self, mode: str, key: str) -> None:
+    def _watch_release(self, mode: str, keys: list) -> None:
         released = threading.Event()
         while not released.wait(POLL_INTERVAL):
             try:
-                if not keyboard.is_pressed(key):
+                if not any(keyboard.is_pressed(key) for key in keys):
                     break
             except Exception:  # noqa: BLE001 - transient hook errors shouldn't strand the mode
                 break

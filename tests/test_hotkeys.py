@@ -1,3 +1,5 @@
+import keyboard as real_keyboard
+
 import ghostwriter.hotkeys as hotkeys
 
 
@@ -26,6 +28,27 @@ def test_right_alt_resolves_to_a_single_scan_code():
 
 def test_ordinary_keys_pass_through_by_name():
     assert hotkeys.resolve_chord("ctrl+shift+d") == ("ctrl", "shift", "d")
+
+
+def test_right_ctrl_scan_codes_exclude_left_ctrls_own_code():
+    # keyboard's own name table pollutes "right ctrl" with scan code 29, which is also Left
+    # Ctrl's code. Binding it unfiltered would suppress Left Ctrl and let it fire this hotkey.
+    hotkeys._right_ctrl_codes.cache_clear()
+    codes = hotkeys._right_ctrl_codes()
+    assert codes, "expected at least one scan code unique to Right Ctrl on this machine"
+    assert 29 not in codes
+
+
+def test_right_ctrl_hold_binds_the_curated_codes_not_the_ambiguous_name(monkeypatch):
+    hotkeys._right_ctrl_codes.cache_clear()
+    fake = register_with(monkeypatch, push_to_talk="right ctrl")
+    hold_calls = [c for c in fake.calls if c[0] != hotkeys.resolve_chord("ctrl+shift+d")]
+    assert len(hold_calls) == 1
+    (spec, suppress) = hold_calls[0]
+    assert suppress
+    # A single key slot whose only alternates are the curated codes, never 29.
+    assert spec == (hotkeys._right_ctrl_codes(),)
+    assert 29 not in spec[0]
 
 
 def test_right_alt_fires_even_though_it_holds_alt_down(monkeypatch):
@@ -63,6 +86,9 @@ class FakeKeyboard:
 
     def remove_hotkey(self, handle):
         pass
+
+    def key_to_scan_codes(self, name):
+        return real_keyboard.key_to_scan_codes(name)
 
 
 def register_with(monkeypatch, **config):
