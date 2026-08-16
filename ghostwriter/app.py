@@ -9,7 +9,6 @@ import threading
 import winsound
 from pathlib import Path
 
-import keyboard
 import numpy as np
 
 from . import config as config_module
@@ -192,9 +191,7 @@ class App:
         if not key or self._stop_key_handle is not None:
             return
         try:
-            # Not suppressed: this key is bound for the whole utterance, and swallowing it
-            # system-wide for that long is indistinguishable from a broken keyboard.
-            self._stop_key_handle = keyboard.add_hotkey(key, self._stop_now)
+            self._stop_key_handle = self.hotkeys.add_temporary(key, self._stop_now)
         except Exception:  # noqa: BLE001 - a bad key name shouldn't break dictation
             log.exception("could not bind stop key %r", key)
 
@@ -202,7 +199,7 @@ class App:
         handle, self._stop_key_handle = self._stop_key_handle, None
         if handle is not None:
             try:
-                keyboard.remove_hotkey(handle)
+                self.hotkeys.remove_temporary(handle)
             except Exception:  # noqa: BLE001
                 pass
 

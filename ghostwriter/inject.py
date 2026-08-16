@@ -6,19 +6,18 @@ import logging
 import threading
 import time
 
-import keyboard
 import pyperclip
 
-log = logging.getLogger(__name__)
+from . import keys
 
-_MODIFIERS = ("ctrl", "shift", "alt", "windows")
+log = logging.getLogger(__name__)
 
 
 def _release_modifiers() -> None:
     """The hotkey chord may still be physically held; a stuck Shift would break the paste."""
-    for key in _MODIFIERS:
+    for key in keys.MODIFIERS:
         try:
-            keyboard.release(key)
+            keys.release(key)
         except Exception:  # noqa: BLE001 - best effort, never block the paste
             pass
 
@@ -35,11 +34,11 @@ def paste_text(text: str, press_enter: bool = False, restore_delay: float = 0.35
     pyperclip.copy(text)
     _release_modifiers()
     time.sleep(0.02)
-    keyboard.send("ctrl+v")
+    keys.send("ctrl+v")
 
     if press_enter:
         time.sleep(0.06)
-        keyboard.send("enter")
+        keys.send("enter")
 
     if previous is not None:
         # Restore off-thread so the target app has time to read the clipboard first.
@@ -59,6 +58,6 @@ def type_text(text: str, press_enter: bool = False) -> None:
     if not text:
         return
     _release_modifiers()
-    keyboard.write(text, delay=0.005)
+    keys.write(text)
     if press_enter:
-        keyboard.send("enter")
+        keys.send("enter")
