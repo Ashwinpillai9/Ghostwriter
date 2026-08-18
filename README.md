@@ -65,6 +65,12 @@ release to stop and paste.
 
 All of this, plus the model and vocabulary, is configurable in `config.toml`.
 
+**Applying changes:** the tray menu's **Reload config** re-reads the file and applies almost
+everything live — hotkeys, wake word, endpointing, overlay colours and animation, vocabulary,
+post-processing and the microphone. Only the dictation model (`model.name`, `model.device`,
+`model.compute_type`) and `audio.sample_rate` need a restart; the pill names them when you
+reload so you are not left wondering why nothing happened.
+
 ## Wake word (hands-free)
 
 Say **"hey ghost"**, talk, and stop — the transcript is pasted without touching the keyboard.

@@ -13,7 +13,7 @@ import numpy as np
 
 from . import config as config_module
 from . import inject, postprocess
-from .audio import Recorder
+from .audio import Recorder, resolve_device
 from .endpoint import SilenceEndpointer
 from .hotkeys import HotkeyManager
 from .overlay import Overlay
@@ -89,6 +89,123 @@ class App:
             cooldown_sec=self.cfg.get("wakeword.cooldown_sec", 2.0),
             device=self.cfg.get("audio.device", ""),
         )
+
+    # --- config reload ---------------------------------------------------
+
+    # Changing these means rebuilding the dictation model, which can be gigabytes and may be
+    # mid-transcription. Deliberately left for a restart rather than swapped underneath a job.
+    RESTART_ONLY = {
+        "model.name": "dictation model",
+        "model.device": "model device",
+        "model.compute_type": "model compute type",
+        "audio.sample_rate": "sample rate",
+    }
+
+    # Rebuilding the wake listener costs a model load, so it is only done when one of these
+    # changed; the rest of [wakeword] is applied by assignment.
+    WAKE_REBUILD_KEYS = ("wakeword.model", "wakeword.device", "wakeword.compute_type")
+
+    def reload_config(self, path: Path | None = None) -> list[str]:
+        """Re-read config.toml and apply everything that can change without a restart.
+
+        The single apply path: the tray's reload item and any settings UI both go through
+        here, so "what does changing this actually do" is answered in one place and can be
+        tested without a UI at all.
+
+        Returns the labels of settings that changed but need a restart, so the caller can say
+        so rather than leaving the user wondering why nothing happened.
+        """
+        previous = self.cfg
+        self.cfg = config_module.load(path or previous.path)
+
+        deferred = [
+            label
+            for key, label in self.RESTART_ONLY.items()
+            if previous.get(key) != self.cfg.get(key)
+        ]
+
+        self.sounds = self.cfg.get("output.sounds", True)
+        self.min_duration = self.cfg.get("audio.min_duration_sec", 0.35)
+
+        self._apply_hotkeys()
+        self._apply_endpoint()
+        self._apply_audio()
+        self._apply_overlay()
+        self._apply_transcriber()
+        self._apply_wakeword(previous)
+
+        log.info("config reloaded from %s%s", self.cfg.path,
+                 f" (needs restart: {', '.join(deferred)})" if deferred else "")
+        return deferred
+
+    def _apply_hotkeys(self) -> None:
+        self.hotkeys.reregister(self.cfg.get("hotkeys", {}))
+
+    def _apply_endpoint(self) -> None:
+        # Every one of these is read fresh on each poll inside wait(), so assigning is enough
+        # even for an utterance already in flight.
+        ep = self.endpointer
+        ep.silence_timeout = self.cfg.get("endpoint.silence_timeout_sec", 1.2)
+        ep.threshold = self.cfg.get("endpoint.silence_threshold", 0.012)
+        ep.min_speech = self.cfg.get("endpoint.min_speech_sec", 0.4)
+        ep.lead_in = self.cfg.get("endpoint.lead_in_sec", 2.0)
+        ep.max_duration = self.cfg.get("endpoint.max_duration_sec", 60.0)
+        ep.min_recording = self.cfg.get("endpoint.min_recording_sec", 4.0)
+        ep.vad_threshold = self.cfg.get("endpoint.vad_threshold", 0.5)
+
+    def _apply_audio(self) -> None:
+        # Recorder.start() reads both of these when it opens the stream, so a change lands on
+        # the next recording rather than disturbing one in progress.
+        self.recorder.device = resolve_device(self.cfg.get("audio.device", ""))
+        self.recorder.max_frames = int(
+            self.cfg.get("audio.max_duration_sec", 300.0) * self.recorder.sample_rate
+        )
+
+    def _apply_overlay(self) -> None:
+        self.overlay.apply_style(OverlayStyle.from_config(self.cfg))
+
+    def _apply_transcriber(self) -> None:
+        if self.transcriber is None:
+            return  # Still loading; it will pick these up from self.cfg when it constructs.
+        vocabulary = self.cfg.get("model.vocabulary", [])
+        self.transcriber.initial_prompt = ", ".join(vocabulary) if vocabulary else None
+        self.transcriber.vad = self.cfg.get("audio.vad", True)
+
+    def _apply_wakeword(self, previous) -> None:
+        """Apply [wakeword], rebuilding the listener only when its own model changed."""
+        enabled = self.cfg.get("wakeword.enabled", True)
+        if not enabled:
+            if self.wake is not None:
+                self.wake.stop()
+                self.wake = None
+            return
+
+        rebuild = self.wake is None or any(
+            previous.get(key) != self.cfg.get(key) for key in self.WAKE_REBUILD_KEYS
+        )
+        if rebuild:
+            if self.wake is not None:
+                self.wake.stop()
+            self.wake = self._build_wake()
+            self.start_listening()
+            return
+
+        wake = self.wake
+        wake.phrase = self.cfg.get("wakeword.phrase", "hey ghost")
+        wake.aliases = self.cfg.get("wakeword.aliases", [])
+        wake.threshold = self.cfg.get("wakeword.threshold", 0.8)
+        wake.vad_threshold = self.cfg.get("wakeword.vad_threshold", 0.5)
+        wake.cooldown_sec = self.cfg.get("wakeword.cooldown_sec", 2.0)
+        wake.model_name = wake.phrase.replace(" ", "_")
+
+        device = resolve_device(self.cfg.get("audio.device", ""))
+        if device != wake.device:
+            # The device is read when the stream opens, so an active listener has to be cycled
+            # for a change to take effect.
+            wake.device = device
+            if wake.listening:
+                wake.pause()
+                wake.resume()
 
     # --- model -----------------------------------------------------------
 
@@ -282,6 +399,7 @@ class App:
         items += [
             pystray.MenuItem("Move overlay", self.move_overlay),
             pystray.MenuItem("Open config.toml", self.open_config),
+            pystray.MenuItem("Reload config", self.reload_from_tray),
             pystray.MenuItem("Quit", self.quit),
         ]
         return pystray.Icon("Ghostwriter", image, "Ghostwriter", pystray.Menu(*items))
@@ -317,6 +435,19 @@ class App:
 
     def move_overlay(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray signature
         self.overlay.start_move()
+
+    def reload_from_tray(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray signature
+        """Reload config.toml, reporting the outcome on the pill rather than in the log."""
+        try:
+            deferred = self.reload_config()
+        except Exception:  # noqa: BLE001 - a malformed file must not take the app down
+            log.exception("config reload failed")
+            self.overlay.set_state("error", "Config reload failed")
+            return
+        if deferred:
+            self.overlay.set_state("done", f"Reloaded — restart for: {', '.join(deferred)}")
+        else:
+            self.overlay.set_state("done", "Config reloaded")
 
     def open_config(self) -> None:
         import os

@@ -13,6 +13,7 @@ import ctypes
 import json
 import logging
 import queue
+import threading
 import time
 import tkinter as tk
 from collections.abc import Callable
@@ -73,6 +74,9 @@ class Overlay:
         self._surface: win32.Surface | None = None
         self._tick_id = None
         self._warm_todo: list | None = None
+        # A style swap arriving from another thread waits here until the Tk thread picks it up.
+        self._style_lock = threading.Lock()
+        self._pending_style: OverlayStyle | None = None
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -223,6 +227,44 @@ class Overlay:
         """Show the pill so it can be dragged even when there is nothing to report."""
         self.moving = True
         self.set_state("moving", LABELS["moving"])
+
+    # --- live restyling --------------------------------------------------
+
+    def apply_style(self, style: OverlayStyle) -> None:
+        """Swap the look at runtime. Callable from any thread.
+
+        The swap itself has to happen on the Tk thread — it may destroy and rebuild the wave's
+        Toplevel — so it is parked here and collected by the next tick, the same way status
+        updates go through `events`.
+        """
+        with self._style_lock:
+            self._pending_style = style
+
+    def _absorb_style(self) -> None:
+        with self._style_lock:
+            style, self._pending_style = self._pending_style, None
+        if style is None:
+            return
+
+        wave_changed = style.wave != self.style.wave
+        self.style = style
+        self.accent = style.accent
+        # Cached chrome is keyed by colour and geometry, so a restyle invalidates the warm-up
+        # plan as well as the entries themselves.
+        self._warm_todo = None
+        chrome.cache_clear()
+
+        if not wave_changed:
+            return
+        if self.wave is not None:
+            self.wave.destroy()
+            self.wave = None
+        if style.wave.enabled:
+            try:
+                self.wave = ScreenWave(self.root, style.wave)
+            except Exception:  # noqa: BLE001 - the pill is the feature; the wave is decoration
+                log.warning("wave overlay unavailable after restyle", exc_info=True)
+                self.wave = None
 
     # --- window style ----------------------------------------------------
 
@@ -378,6 +420,7 @@ class Overlay:
 
     def _tick_once(self) -> None:
         """One frame of work. Split out from the scheduling so it can be driven in tests."""
+        self._absorb_style()
         changed = False
         while True:
             try:
