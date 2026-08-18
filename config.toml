@@ -56,9 +56,10 @@ silence_threshold = 0.012
 min_speech_sec = 0.4
 # If you never start talking after the wake word, give up after this long.
 lead_in_sec = 2.0
-# Once you've started talking, keep recording for at least this long before a pause is allowed
-# to end it — a pause to think early in a long thought won't cut it short. Doesn't delay
-# no_speech (saying nothing at all) or the stop key, only the silence-based ending.
+# Absolute floor on a hands-free recording: it never ends before this, whether you paused
+# mid-thought or hadn't started talking yet. Only max_duration_sec outranks it — the stop key
+# and Esc still cut it short. This is the knob for long-form dictation; the cost of raising it
+# is that an accidental wake word holds the microphone open for the same length.
 min_recording_sec = 4.0
 # Hard cap on a single hands-free utterance.
 max_duration_sec = 60.0

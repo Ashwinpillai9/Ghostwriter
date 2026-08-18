@@ -105,10 +105,14 @@ def test_silence_fires_once_min_recording_has_elapsed():
 
 
 def test_min_recording_end_to_end_outlasts_an_early_pause():
-    # A real run of wait(): speak briefly, go quiet well before min_recording elapses, and
-    # confirm the utterance keeps running rather than ending on that first pause.
+    # A real run of wait(): speak, go quiet well before min_recording elapses, and confirm the
+    # utterance keeps running rather than ending on that first pause.
+    #
+    # The loud run is generous on purpose. It used to be 6 samples, which needed 0.02s of wall
+    # clock to pass within 6 polls of 0.005s — and Windows' sleep granularity does not
+    # guarantee that, so speech_seen sometimes never got set and the test flaked ~20% of runs.
     ep = make(
-        [0.5] * 6 + [0.0] * 400,
+        [0.5] * 40 + [0.0] * 400,
         silence_timeout=0.05,
         min_speech=0.02,
         min_recording=0.25,
@@ -121,15 +125,34 @@ def test_min_recording_end_to_end_outlasts_an_early_pause():
     assert elapsed >= 0.25, "must not end before min_recording has elapsed"
 
 
-def test_min_recording_does_not_delay_no_speech():
-    # Saying nothing at all is a different failure mode from pausing mid-thought — giving up
-    # after lead_in must not wait on a floor meant for utterances that already started.
-    ep = make([0.0] * 500, lead_in=0.05, min_recording=5.0)
+def test_min_recording_delays_no_speech_too():
+    # The floor is absolute: saying nothing still holds the recording open, because "I paused
+    # before starting" and "I said nothing at all" are indistinguishable until the floor is up.
+    # Before this, a slow start fell through to no_speech at lead_in and ended a recording after
+    # 2s that had been configured to run for 15.
+    ep = make([0.0] * 5000, lead_in=0.05, min_recording=0.4)
     started = time.monotonic()
     reason = ep.wait(cancelled=lambda: False, poll=0.005)
     elapsed = time.monotonic() - started
     assert reason == "no_speech"
-    assert elapsed < 1.0
+    assert elapsed >= 0.4, "no_speech must not fire before the floor either"
+
+
+def test_a_slow_start_is_not_punished():
+    # The reported bug, end to end: quiet past lead_in, then real speech. The recording must
+    # survive to hear it rather than giving up at lead_in.
+    ep = make(
+        [0.0] * 60 + [0.5] * 40 + [0.0] * 400,
+        silence_timeout=0.05,
+        min_speech=0.02,
+        lead_in=0.1,
+        min_recording=0.6,
+        max_duration=3.0,
+    )
+    started = time.monotonic()
+    reason = ep.wait(cancelled=lambda: False, poll=0.005)
+    assert reason == "silence", "speech that starts after lead_in must still be captured"
+    assert time.monotonic() - started >= 0.6
 
 
 def test_min_recording_never_overrides_max_duration():
