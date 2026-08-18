@@ -53,6 +53,11 @@ hotkeys, the microphone or the overlay.
   usually just assignment. Adding a setting means teaching `_apply_*` about it — otherwise it
   silently needs a restart. Genuinely restart-only keys are listed in `App.RESTART_ONLY` and
   reported back to the caller rather than applied.
+- **A save must settle before it is applied.** `watcher.py` polls `config.toml`'s (mtime, size)
+  and waits for it to stop changing, because editors do not write a file in one step — several
+  truncate then write, others write a temp file and rename over the original. Reloading on the
+  first change reads a half-written file and reports a syntax error for something typed
+  correctly. The same window collapses an editor that autosaves per keystroke into one reload.
 - **`Overlay.apply_style` must land on the Tk thread.** It can destroy and rebuild the wave's
   Toplevel, so a swap is parked in `_pending_style` and collected by the next tick, the same way
   status updates go through `events`. Calling it from a worker thread is safe; mutating

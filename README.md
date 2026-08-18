@@ -65,11 +65,15 @@ release to stop and paste.
 
 All of this, plus the model and vocabulary, is configurable in `config.toml`.
 
-**Applying changes:** the tray menu's **Reload config** re-reads the file and applies almost
-everything live — hotkeys, wake word, endpointing, overlay colours and animation, vocabulary,
-post-processing and the microphone. Only the dictation model (`model.name`, `model.device`,
-`model.compute_type`) and `audio.sample_rate` need a restart; the pill names them when you
-reload so you are not left wondering why nothing happened.
+**Applying changes:** just save `config.toml`. Ghostwriter notices about half a second later and
+applies almost everything live — hotkeys, wake word, endpointing, overlay colours and animation,
+vocabulary, post-processing and the microphone — then says so on the pill. The tray menu's
+**Reload config** does the same on demand.
+
+Only the dictation model (`model.name`, `model.device`, `model.compute_type`) and
+`audio.sample_rate` need a restart. The pill names them when you save, so you are not left
+wondering why nothing happened. A file with a syntax error is reported on the pill and ignored;
+the running config is left alone until you fix it.
 
 ## Wake word (hands-free)
 

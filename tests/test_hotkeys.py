@@ -327,3 +327,37 @@ def test_callbacks_run_off_the_hook_thread(wired):
     dispatch(event("right ctrl", down=True))  # arms; callback blocks for 5s
     assert time.monotonic() - begin < 0.5, "dispatch must not wait for the callback"
     assert started.wait(1.0)
+
+
+def test_a_held_key_survives_a_reregister(wired):
+    # Auto-reload rebinds hotkeys whenever config.toml is saved. If that lost the hold state,
+    # the key-up would be ignored and a recording started by it would never stop.
+    build, _held, events = wired
+    manager, dispatch = build()
+
+    dispatch(event("right ctrl", down=True))
+    dispatch(event("right ctrl", down=False))
+    dispatch(event("right ctrl", down=True))   # armed and held
+    settle()
+    assert events == [("press", "paste")]
+
+    manager.reregister({"push_to_talk": "right ctrl", "toggle": "ctrl+shift+d"})
+    dispatch(event("right ctrl", down=False))  # the release, after the rebind
+    settle()
+    assert events == [("press", "paste"), ("release", "paste")]
+
+
+def test_a_reregister_that_changes_the_chord_does_not_carry_state(wired):
+    # State is only carried for an unchanged chord; rebinding to a different key starts clean.
+    build, _held, events = wired
+    manager, dispatch = build()
+
+    dispatch(event("right ctrl", down=True))
+    dispatch(event("right ctrl", down=False))
+    dispatch(event("right ctrl", down=True))   # held
+    settle()
+
+    manager.reregister({"push_to_talk": "right alt"})
+    binding = [b for b in manager._bindings if b.kind == "hold"][0]
+    assert binding.chord == "right alt"
+    assert not binding.held

@@ -1,4 +1,5 @@
-# Ghostwriter configuration. Edit and restart (or press the reload item in the tray menu).
+# Ghostwriter configuration. Save this file and it applies straight away — almost everything
+# takes effect without a restart, and the pill tells you if something needs one.
 
 [hotkeys]
 # Hold this to record; release to transcribe and paste. You press Enter yourself.

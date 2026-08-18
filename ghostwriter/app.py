@@ -20,6 +20,7 @@ from .overlay import Overlay
 from .style import OverlayStyle
 from .transcribe import Transcriber
 from .wakeword_whisper import WhisperWakeWordListener
+from .watcher import ConfigWatcher
 
 log = logging.getLogger("Ghostwriter")
 
@@ -53,6 +54,7 @@ class App:
         self.wake_active = False
         self._stop_requested = False
         self._stop_key_handle = None
+        self.watcher: ConfigWatcher | None = None
 
         self.endpointer = SilenceEndpointer(
             level_source=lambda: self.recorder.level,
@@ -438,16 +440,25 @@ class App:
 
     def reload_from_tray(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray signature
         """Reload config.toml, reporting the outcome on the pill rather than in the log."""
+        self.announce_reload(saved=False)
+
+    def announce_reload(self, saved: bool = True) -> None:
+        """Reload and say what happened on the pill.
+
+        Shared by the tray item and the file watcher, so a save and a manual reload report
+        identically — the only difference is that a save says so, since nothing was clicked.
+        """
         try:
             deferred = self.reload_config()
         except Exception:  # noqa: BLE001 - a malformed file must not take the app down
             log.exception("config reload failed")
-            self.overlay.set_state("error", "Config reload failed")
+            self.overlay.set_state("error", "Config error — see the console")
             return
+        prefix = "Config saved" if saved else "Config reloaded"
         if deferred:
-            self.overlay.set_state("done", f"Reloaded — restart for: {', '.join(deferred)}")
+            self.overlay.set_state("done", f"{prefix} — restart for: {', '.join(deferred)}")
         else:
-            self.overlay.set_state("done", "Config reloaded")
+            self.overlay.set_state("done", prefix)
 
     def open_config(self) -> None:
         import os
@@ -456,6 +467,8 @@ class App:
 
     def quit(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray callback signature
         self.jobs.put(None)
+        if self.watcher is not None:
+            self.watcher.stop()
         if self.wake is not None:
             self.wake.stop()
         self.hotkeys.unregister()
@@ -469,6 +482,9 @@ class App:
         threading.Thread(target=self.load_model, daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()
         self.hotkeys.register(self.cfg.get("hotkeys", {}))
+        # Saving config.toml applies by itself; the tray item is the manual fallback.
+        self.watcher = ConfigWatcher(self.cfg.path, self.announce_reload)
+        self.watcher.start()
         # Before build_tray, since a failed listener clears self.wake and drops its menu item.
         self.start_listening()
         self.tray = self.build_tray()

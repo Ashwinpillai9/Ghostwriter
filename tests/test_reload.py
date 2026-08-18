@@ -257,7 +257,7 @@ def test_tray_reload_names_what_needs_a_restart(app):
 def test_tray_reload_survives_a_broken_config(app):
     app.cfg.path.write_text("this is not [valid toml", encoding="utf-8")
     app.reload_from_tray()
-    assert app.overlay.states[-1] == ("error", "Config reload failed")
+    assert app.overlay.states[-1] == ("error", "Config error — see the console")
 
 
 # --- guards against phantom attributes ---------------------------------------
