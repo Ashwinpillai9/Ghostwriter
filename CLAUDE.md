@@ -64,18 +64,20 @@ hotkeys, the microphone or the overlay.
   through the Win32 virtual-desktop metrics; see `ghostwriter/overlay.py`.
 - **`winfo_x`/`winfo_y` go stale while a window is withdrawn.** The overlay tracks its own
   position instead.
-- **`keyboard` resolves `"right alt"` to both Alt scan codes.** Side-specific keys are bound by
-  scan code, or a suppressed binding swallows Left Alt and `Alt+Tab` with it.
-- **Windows' low-level keyboard hook reports Left and Right Ctrl with the same scan code.**
-  `keyboard.key_to_scan_codes("right ctrl")` claims otherwise, but that table is synthesised
-  from a separate WinAPI pass and doesn't match what a live keypress actually sends — confirmed
-  with `scripts/keyboard_probe.py`: a real Right Ctrl press shows `scan_code=29`, identical to
-  Left Ctrl. `add_hotkey` and `is_pressed` match on that same integer, so no scan-code spec can
-  bind Right Ctrl alone. Only `event.name` tells them apart (it uses the hook's extended-key
-  flag internally), so `hotkeys._bind_right_ctrl_hold` uses a raw `keyboard.hook()` and matches
-  on name instead of going through `add_hotkey`. It also arms only on a double-tap-then-hold,
-  not a single press — Right Ctrl is the key held for every `Ctrl+C`/`Ctrl+V`, and a single-tap
-  binding fired dictation on all of them.
+- **Match keys on virtual-key codes, never scan codes.** Left and Right Ctrl share scan code 29
+  — confirmed with `scripts/keyboard_probe.py` — so no scan-code spec can bind Right Ctrl alone.
+  `KBDLLHOOKSTRUCT.vkCode` *is* sided (`VK_RCONTROL` 163 vs `VK_LCONTROL` 162), which is why
+  `ghostwriter/keys/` owns a `WH_KEYBOARD_LL` hook rather than using a library. This replaced
+  the `keyboard` package, whose scan-code matching made side-specific binds impossible.
+- **Right Ctrl arms only on a double-tap-then-hold.** It is the key held for every `Ctrl+C` and
+  `Ctrl+V`, and a single-tap binding fired dictation on all of them. `hotkeys.GATED` lists the
+  bare-modifier chords this applies to.
+- **The hook callback has ~300 ms before Windows silently unhooks it** (`LowLevelHooksTimeout`),
+  and a dead hook is indistinguishable from a broken keyboard. `HotkeyManager._on_event` only
+  compares; every callback is dispatched to its own thread by `_fire`.
+- **Synthetic keystrokes must be tagged or they feed back.** `keys.windows.SIGNATURE` goes into
+  `dwExtraInfo` on everything we send, and the hook skips events carrying it — otherwise the
+  `Ctrl+V` used to paste would re-trigger our own Ctrl binding.
 - **A loudness gate cannot detect speech on an auto-gain laptop mic.** Both the wake word and
   the endpointer use Silero VAD; see the comments atop `wakeword_whisper.py` and `endpoint.py`.
   `scripts/mic_check.py` measures a room and prints the threshold to use.

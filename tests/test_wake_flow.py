@@ -44,13 +44,28 @@ class FakeWake:
         self.listening = False
 
 
+class FakeHotkeys:
+    """Stands in for HotkeyManager: records the stop key without touching a real hook."""
+
+    def __init__(self):
+        self.temporary = []
+
+    def add_temporary(self, chord, callback):
+        token = (chord, callback)
+        self.temporary.append(token)
+        return token
+
+    def remove_temporary(self, token):
+        if token in self.temporary:
+            self.temporary.remove(token)
+
+
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "beep", lambda kind: None)
-    monkeypatch.setattr(app_module.keyboard, "add_hotkey", lambda *a, **k: object())
-    monkeypatch.setattr(app_module.keyboard, "remove_hotkey", lambda *a, **k: None)
 
     application = app_module.App.__new__(app_module.App)
+    application.hotkeys = FakeHotkeys()
     application.cfg = app_module.config_module.load(tmp_path / "missing.toml")
     application.sounds = False
     application.min_duration = 0.0

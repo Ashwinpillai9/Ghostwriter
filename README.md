@@ -76,8 +76,13 @@ The utterance ends on whichever comes first:
 - **The stop key** — `Down` by default, to cut it off immediately and still transcribe. `Esc`
   discards instead.
 
-Say the wake word with nothing after it and the recording drops silently after
-`endpoint.lead_in_sec`.
+But never before `endpoint.min_recording_sec` (default 4s), which is an absolute floor — a
+pause to think, or taking a moment to start, will not cut you off. Raise it for long-form
+dictation; the cost is that an accidental wake word holds the microphone open for that long,
+until you press the stop key or `Esc`.
+
+Say the wake word with nothing after it and the recording drops silently once that floor and
+`endpoint.lead_in_sec` have both passed.
 
 The tray menu has a **Listening for "…"** checkbox to mute the mic listener, and
 `wakeword.enabled = false` turns it off for good.

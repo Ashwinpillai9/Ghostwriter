@@ -55,10 +55,9 @@ class SilenceEndpointer:
         # Grace period for the speaker to start talking after the wake word.
         self.lead_in = lead_in
         self.max_duration = max_duration
-        # Floor under "silence" only: a pause early on, while you're mid-thought, shouldn't
-        # end the recording just because it happened to be long enough. no_speech and
-        # max_duration are unaffected — this only holds off ending an utterance that has
-        # already started.
+        # Absolute floor on how long a hands-free recording runs. Neither a pause to think nor
+        # a slow start may end it before this. Only max_duration outranks it; the stop key and
+        # Esc still cut it short, reaching `wait` through `cancelled` rather than through here.
         self.min_recording = min_recording
         self.audio_source = audio_source
         self.vad_threshold = vad_threshold
@@ -103,12 +102,18 @@ class SilenceEndpointer:
 
     def reason_to_stop(self, started: float, speech_seen: bool, last_voice: float) -> str | None:
         now = time.monotonic()
-        if now - started >= self.max_duration:
+        elapsed = now - started
+        if elapsed >= self.max_duration:
             return "max_duration"
+        if elapsed < self.min_recording:
+            # The floor, and it is absolute. It used to guard only the "silence" branch, so a
+            # slow start fell through to `no_speech` at lead_in — ending the recording after
+            # 2s with min_recording set to 15.
+            return None
         if speech_seen:
-            if now - started >= self.min_recording and now - last_voice >= self.silence_timeout:
+            if now - last_voice >= self.silence_timeout:
                 return "silence"
-        elif now - started >= self.lead_in:
+        elif elapsed >= self.lead_in:
             return "no_speech"
         return None
 

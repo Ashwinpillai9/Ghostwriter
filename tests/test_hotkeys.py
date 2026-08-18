@@ -1,220 +1,329 @@
+"""Hotkey dispatch, driven through the real virtual-key matching.
+
+Events are built with genuine vk codes (`keys.vk`), so these tests exercise the same matching
+the live hook does — only the hook installation and the physical key state are stubbed.
+"""
+
 import threading
 import time
 
-import keyboard as real_keyboard
+import pytest
 
 import ghostwriter.hotkeys as hotkeys
+from ghostwriter import keys
 
 
-def fake_pressed(held: set[str]):
-    return lambda key: key in held
+def event(name: str, down: bool = True) -> keys.KeyEvent:
+    return keys.KeyEvent(vk=keys.vk(name), scan=0, down=down, extended=False, injected=False)
 
 
-def test_trigger_key_is_last_component():
-    assert hotkeys.trigger_key("ctrl+space") == "space"
-    assert hotkeys.trigger_key("ctrl+shift+enter") == "enter"
+class FakeHook:
+    """Captures the dispatch callback instead of installing a real Windows hook."""
+
+    instances = []
+
+    def __init__(self, callback):
+        self.callback = callback
+        self.started = False
+        self.stopped = False
+        FakeHook.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
 
 
-def test_chord_matches_when_only_its_modifiers_are_held(monkeypatch):
-    monkeypatch.setattr(hotkeys.keyboard, "is_pressed", fake_pressed({"ctrl", "space"}))
-    assert hotkeys.exclusively_pressed("ctrl+space")
+@pytest.fixture
+def wired(monkeypatch):
+    """Builds a manager over a fake hook, with controllable physical key state."""
+    FakeHook.instances = []
+    monkeypatch.setattr(hotkeys.keys, "Hook", FakeHook)
+    held: set[str] = set()
+    monkeypatch.setattr(hotkeys.keys, "is_pressed", lambda name: name in held)
 
-
-def test_right_alt_resolves_to_a_single_scan_code():
-    # The name alone matches Left Alt as well, which suppress=True would then swallow.
-    resolved = hotkeys.resolve_key("right alt")
-    assert resolved == hotkeys.keyboard.key_to_scan_codes("right menu")[0]
-    assert hotkeys.trigger_key("right alt") == resolved
-    assert hotkeys.resolve_chord("right alt") == (resolved,)
-    assert hotkeys.keyboard.parse_hotkey(hotkeys.resolve_chord("right alt")) == (((resolved,),),)
-
-
-def test_ordinary_keys_pass_through_by_name():
-    assert hotkeys.resolve_chord("ctrl+shift+d") == ("ctrl", "shift", "d")
-
-
-# Right Ctrl cannot be matched through add_hotkey's scan codes at all: a real Right Ctrl press
-# and a real Left Ctrl press report the identical scan code (29) on the low-level hook, verified
-# directly with scripts/keyboard_probe.py. Only `event.name` tells them apart, so it is bound
-# with a raw `keyboard.hook()` instead — these tests cover that path, not scan-code resolution.
-
-
-def test_right_ctrl_hold_uses_a_raw_hook_not_add_hotkey(monkeypatch):
-    fake = register_with(monkeypatch, push_to_talk="right ctrl")
-    # Only the toggle goes through add_hotkey; push_to_talk must not, since any scan-code spec
-    # for "right ctrl" would either miss real presses or also match Left Ctrl.
-    assert len(fake.calls) == 1
-    assert fake.calls[0][0] == hotkeys.resolve_chord("ctrl+shift+d")
-    assert len(fake.hooks) == 1
-    (_callback, suppress) = fake.hooks[0]
-    assert suppress
-
-
-def test_right_ctrl_hook_ignores_events_for_other_keys(monkeypatch):
-    fake = register_with(monkeypatch, push_to_talk="right ctrl")
-    on_event = fake.hooks[0][0]
-    event = FakeEvent(name="left ctrl", event_type=real_keyboard.KEY_DOWN)
-    assert on_event(event) is True  # pass through untouched
-
-
-# Right Ctrl also arms on a double-tap-then-hold rather than a single press: it's the key held
-# for every Ctrl+C/Ctrl+V, so arming on the first press-down would start dictation on every one
-# of those. Only a second tap within DOUBLE_TAP_WINDOW of the first tap's release counts.
-
-
-def _build_manager(monkeypatch, on_press=None, on_release=None):
-    fake = FakeKeyboard()
-    monkeypatch.setattr(hotkeys, "keyboard", fake)
-    manager = hotkeys.HotkeyManager(
-        on_press or (lambda m: None), on_release or (lambda m: None), lambda: None, lambda: None
-    )
-    manager.register({"push_to_talk": "right ctrl", "toggle": "ctrl+shift+d"})
-    return fake, fake.hooks[0][0]
-
-
-def test_right_ctrl_single_tap_never_arms_or_suppresses(monkeypatch):
     events = []
-    _fake, on_event = _build_manager(monkeypatch, on_press=lambda m: events.append(m))
 
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
+    def build(**config):
+        manager = hotkeys.HotkeyManager(
+            on_press=lambda mode: events.append(("press", mode)),
+            on_release=lambda mode: events.append(("release", mode)),
+            on_toggle=lambda: events.append(("toggle", None)),
+            on_cancel=lambda: events.append(("cancel", None)),
+        )
+        manager.register({"push_to_talk": "right ctrl", "toggle": "ctrl+shift+d", **config})
+        return manager, FakeHook.instances[-1].callback
+
+    return build, held, events
+
+
+def settle():
+    """Callbacks run on their own threads so a slow one can't get the hook torn down."""
     time.sleep(0.05)
-    assert events == [], "a lone tap must never start dictation"
 
 
-def test_right_ctrl_double_tap_then_hold_arms_and_suppresses(monkeypatch):
-    events = []
-    done = threading.Event()
-
-    def on_release(mode):
-        events.append(("release", mode))
-        done.set()
-
-    _fake, on_event = _build_manager(
-        monkeypatch, on_press=lambda m: events.append(("press", m)), on_release=on_release
-    )
-
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True  # tap 1: untouched
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is False  # tap 2: arms, suppressed
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is False
-
-    assert done.wait(1.0), "release callback never fired"
-    assert ("press", "paste") in events
-    assert ("release", "paste") in events
+# --- key codes ---------------------------------------------------------------
 
 
-def test_right_ctrl_second_tap_too_slow_does_not_arm(monkeypatch):
-    monkeypatch.setattr(hotkeys, "DOUBLE_TAP_WINDOW", 0.01)
-    events = []
-    _fake, on_event = _build_manager(monkeypatch, on_press=lambda m: events.append(m))
-
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
-    time.sleep(0.05)  # well past the (shrunk) window
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True  # treated as tap 1
-    assert events == []
+def test_sided_ctrl_has_its_own_virtual_key():
+    # The whole reason for matching on vk rather than scan code: these differ, scan codes don't.
+    assert keys.vk("right ctrl") != keys.vk("left ctrl")
+    assert keys.vk("right ctrl") == 0xA3
 
 
-def test_right_ctrl_requires_a_fresh_double_tap_after_release(monkeypatch):
-    events = []
-    _fake, on_event = _build_manager(monkeypatch, on_press=lambda m: events.append(m))
-
-    # A full double-tap-hold-release cycle...
-    on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN))
-    on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP))
-    on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN))
-    on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP))
-    assert events == ["paste"]
-
-    # ...then a single immediate tap must not re-arm on its own.
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True
-    assert events == ["paste"]
+def test_generic_ctrl_matches_either_side_but_sided_does_not():
+    assert keys.matches(keys.vk("left ctrl"), "ctrl")
+    assert keys.matches(keys.vk("right ctrl"), "ctrl")
+    assert keys.matches(keys.vk("right ctrl"), "right ctrl")
+    assert not keys.matches(keys.vk("left ctrl"), "right ctrl")
 
 
-def test_right_ctrl_hook_respects_suppress_false(monkeypatch):
-    fake = register_with(monkeypatch, push_to_talk="right ctrl", suppress=False)
-    on_event = fake.hooks[0][0]
-    on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN))
-    on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP))
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_DOWN)) is True  # arms, not suppressed
-    assert on_event(FakeEvent("right ctrl", real_keyboard.KEY_UP)) is True
+def test_chord_parsing_and_trigger():
+    assert keys.chord_parts("Ctrl+Shift+D") == ("ctrl", "shift", "d")
+    assert keys.trigger("ctrl+shift+d") == "d"
+    assert keys.trigger("right ctrl") == "right ctrl"
 
 
-def test_right_alt_fires_even_though_it_holds_alt_down(monkeypatch):
-    # The default binding: "alt" reads as pressed, but it is the chord itself, not an extra.
-    monkeypatch.setattr(hotkeys.keyboard, "is_pressed", fake_pressed({"alt", "right alt"}))
-    assert hotkeys.exclusively_pressed("right alt")
+def test_unknown_key_is_rejected():
+    with pytest.raises(keys.UnknownKey):
+        keys.vk("nonsense key")
 
 
-def test_right_alt_tolerates_altgr_reporting_ctrl(monkeypatch):
-    monkeypatch.setattr(hotkeys.keyboard, "is_pressed", fake_pressed({"ctrl", "alt", "right alt"}))
-    assert hotkeys.exclusively_pressed("right alt")
+def test_sided_name_covers_its_generic_modifier():
+    # Without this the default right-ctrl binding would see ctrl as an *extra* modifier held.
+    assert "ctrl" in keys.covered_modifiers("right ctrl")
+    # AltGr reports as ctrl+alt on layouts that have it.
+    assert keys.covered_modifiers("right alt") >= {"alt", "ctrl"}
 
 
-def test_right_alt_still_rejects_unrelated_modifiers(monkeypatch):
-    monkeypatch.setattr(hotkeys.keyboard, "is_pressed", fake_pressed({"alt", "right alt", "shift"}))
-    assert not hotkeys.exclusively_pressed("right alt")
+# --- exclusivity -------------------------------------------------------------
 
 
 def test_extra_modifier_rejects_the_narrower_chord(monkeypatch):
-    # Pressing ctrl+shift+space must not also fire the ctrl+space hotkey.
-    monkeypatch.setattr(hotkeys.keyboard, "is_pressed", fake_pressed({"ctrl", "shift", "space"}))
+    monkeypatch.setattr(hotkeys.keys, "is_pressed", lambda n: n in {"ctrl", "shift"})
     assert not hotkeys.exclusively_pressed("ctrl+space")
     assert hotkeys.exclusively_pressed("ctrl+shift+space")
 
 
-class FakeEvent:
-    def __init__(self, name, event_type):
-        self.name = name
-        self.event_type = event_type
+def test_right_ctrl_tolerated_despite_holding_ctrl(monkeypatch):
+    monkeypatch.setattr(hotkeys.keys, "is_pressed", lambda n: n in {"ctrl"})
+    assert hotkeys.exclusively_pressed("right ctrl")
 
 
-class FakeKeyboard:
-    """Records how each binding was registered."""
-
-    KEY_DOWN = real_keyboard.KEY_DOWN
-    KEY_UP = real_keyboard.KEY_UP
-
-    def __init__(self):
-        self.calls = []
-        self.hooks = []
-
-    def add_hotkey(self, chord, callback, suppress=False):  # noqa: ARG002 - keyboard's API
-        self.calls.append((chord, suppress))
-        return object()
-
-    def remove_hotkey(self, handle):
-        pass
-
-    def key_to_scan_codes(self, name):
-        return real_keyboard.key_to_scan_codes(name)
-
-    def is_pressed(self, name):  # noqa: ARG002 - keyboard's API
-        return False
-
-    def hook(self, callback, suppress=False):
-        self.hooks.append((callback, suppress))
-        return callback
-
-    def unhook(self, handle):
-        pass
+# --- the double-tap gate -----------------------------------------------------
+#
+# Right Ctrl is held for every Ctrl+C and Ctrl+V, so arming on the first press-down would start
+# dictation on all of them. Only a second tap soon after the first tap's release counts.
 
 
-def register_with(monkeypatch, **config):
-    fake = FakeKeyboard()
-    monkeypatch.setattr(hotkeys, "keyboard", fake)
-    manager = hotkeys.HotkeyManager(lambda m: None, lambda m: None, lambda: None, lambda: None)
-    manager.register({"push_to_talk": "right alt", "toggle": "ctrl+shift+d", **config})
-    return fake
+def test_bare_ctrl_is_gated_but_a_chord_is_not():
+    assert hotkeys.needs_double_tap("right ctrl")
+    assert hotkeys.needs_double_tap("ctrl")
+    assert not hotkeys.needs_double_tap("ctrl+shift+d")
+    assert not hotkeys.needs_double_tap("right alt")
 
 
-def test_bindings_are_suppressed_by_default(monkeypatch):
-    assert all(suppress for _chord, suppress in register_with(monkeypatch).calls)
+def test_single_tap_never_arms_and_is_never_suppressed(wired):
+    build, _held, events = wired
+    _manager, dispatch = build()
+
+    assert dispatch(event("right ctrl", down=True)) is True
+    assert dispatch(event("right ctrl", down=False)) is True
+    settle()
+    assert events == [], "a lone tap must never start dictation"
 
 
-def test_suppression_can_be_turned_off(monkeypatch):
-    # A suppressed key is invisible to every other program for as long as Ghostwriter runs, so
-    # there has to be a way to hand it back without unbinding it.
-    fake = register_with(monkeypatch, suppress=False)
-    assert not any(suppress for _chord, suppress in fake.calls)
+def test_double_tap_then_hold_arms_and_suppresses(wired):
+    build, _held, events = wired
+    _manager, dispatch = build()
+
+    assert dispatch(event("right ctrl", down=True)) is True  # tap 1: untouched
+    assert dispatch(event("right ctrl", down=False)) is True
+    assert dispatch(event("right ctrl", down=True)) is False  # tap 2: arms, suppressed
+    assert dispatch(event("right ctrl", down=False)) is False
+    settle()
+    assert events == [("press", "paste"), ("release", "paste")]
+
+
+def test_second_tap_too_slow_does_not_arm(wired, monkeypatch):
+    monkeypatch.setattr(hotkeys, "DOUBLE_TAP_WINDOW", 0.01)
+    build, _held, events = wired
+    _manager, dispatch = build()
+
+    dispatch(event("right ctrl", down=True))
+    dispatch(event("right ctrl", down=False))
+    time.sleep(0.05)  # well past the (shrunk) window
+    assert dispatch(event("right ctrl", down=True)) is True  # treated as a fresh tap 1
+    settle()
+    assert events == []
+
+
+def test_a_fresh_double_tap_is_required_after_release(wired):
+    build, _held, events = wired
+    _manager, dispatch = build()
+
+    for down in (True, False, True, False):
+        dispatch(event("right ctrl", down=down))
+    settle()
+    assert events == [("press", "paste"), ("release", "paste")]
+
+    # A single immediate tap must not re-arm on its own.
+    assert dispatch(event("right ctrl", down=True)) is True
+    settle()
+    assert events == [("press", "paste"), ("release", "paste")]
+
+
+def test_left_ctrl_never_triggers_a_right_ctrl_binding(wired):
+    build, _held, events = wired
+    _manager, dispatch = build()
+
+    for down in (True, False, True, False):
+        assert dispatch(event("left ctrl", down=down)) is True
+    settle()
+    assert events == []
+
+
+def test_auto_repeat_does_not_re_fire_press(wired):
+    build, _held, events = wired
+    _manager, dispatch = build()
+
+    dispatch(event("right ctrl", down=True))
+    dispatch(event("right ctrl", down=False))
+    dispatch(event("right ctrl", down=True))  # armed
+    dispatch(event("right ctrl", down=True))  # auto-repeat
+    dispatch(event("right ctrl", down=True))
+    settle()
+    assert events == [("press", "paste")], "auto-repeat must not look like a new press"
+
+
+# --- suppression -------------------------------------------------------------
+
+
+def test_suppress_false_passes_the_key_through(wired):
+    build, _held, events = wired
+    _manager, dispatch = build(suppress=False)
+
+    dispatch(event("right ctrl", down=True))
+    dispatch(event("right ctrl", down=False))
+    assert dispatch(event("right ctrl", down=True)) is True  # arms, but not swallowed
+    assert dispatch(event("right ctrl", down=False)) is True
+    settle()
+    assert events == [("press", "paste"), ("release", "paste")]
+
+
+# --- toggle and cancel -------------------------------------------------------
+
+
+def test_toggle_fires_only_with_its_modifiers_held(wired):
+    build, held, events = wired
+    _manager, dispatch = build()
+
+    dispatch(event("d", down=True))  # no modifiers held
+    settle()
+    assert events == []
+
+    held |= {"ctrl", "shift"}
+    assert dispatch(event("d", down=True)) is False  # suppressed
+    settle()
+    assert events == [("toggle", None)]
+
+
+def test_cancel_fires_but_always_reaches_the_app(wired):
+    build, _held, events = wired
+    _manager, dispatch = build(cancel="esc")
+
+    # Esc must keep working normally everywhere else, so it is never swallowed.
+    assert dispatch(event("esc", down=True)) is True
+    settle()
+    assert events == [("cancel", None)]
+
+
+# --- transient bindings ------------------------------------------------------
+
+
+def test_temporary_binding_fires_then_stops_after_removal(wired):
+    build, _held, _events = wired
+    manager, dispatch = build()
+    fired = []
+
+    token = manager.add_temporary("down", lambda: fired.append(1))
+    assert dispatch(event("down", down=True)) is True  # never suppressed
+    settle()
+    assert fired == [1]
+
+    manager.remove_temporary(token)
+    dispatch(event("down", down=True))
+    settle()
+    assert fired == [1], "removed binding must stop firing"
+
+
+def test_temporary_binding_survives_a_reregister(wired):
+    # An utterance in flight keeps its stop key even if settings rewrite the chords underneath.
+    build, _held, _events = wired
+    manager, dispatch = build()
+    fired = []
+
+    manager.add_temporary("down", lambda: fired.append(1))
+    manager.reregister({"push_to_talk": "right alt", "toggle": "ctrl+shift+d"})
+    dispatch(event("down", down=True))
+    settle()
+    assert fired == [1]
+
+
+# --- lifecycle ---------------------------------------------------------------
+
+
+def test_unknown_chord_is_skipped_not_fatal(wired):
+    build, _held, _events = wired
+    manager, _dispatch = build(push_to_talk="nonsense key")
+    assert all(b.chord != "nonsense key" for b in manager._bindings)
+
+
+def test_unregister_stops_the_hook(wired):
+    build, _held, _events = wired
+    manager, _dispatch = build()
+    manager.unregister()
+    assert FakeHook.instances[-1].stopped
+    assert manager._bindings == []
+
+
+def test_reregister_swaps_chords_without_a_second_hook(wired):
+    build, held, events = wired
+    manager, dispatch = build()
+    before = len(FakeHook.instances)
+
+    manager.reregister({"push_to_talk": "right alt", "toggle": "ctrl+shift+d"})
+    assert len(FakeHook.instances) == before, "the hook must be reused, not reinstalled"
+
+    # The old binding is gone; the new one works. Right Alt is not gated, so one press is enough.
+    for down in (True, False, True, False):
+        dispatch(event("right ctrl", down=down))
+    settle()
+    assert events == []
+
+    assert dispatch(event("right alt", down=True)) is False
+    settle()
+    assert events == [("press", "paste")]
+
+
+def test_callbacks_run_off_the_hook_thread(wired):
+    # Windows unhooks a low-level hook that takes ~300ms, so dispatch must not block on a
+    # callback. A callback that blocks forever must still let the hook return.
+    build, _held, _events = wired
+    started = threading.Event()
+    manager = hotkeys.HotkeyManager(
+        on_press=lambda mode: (started.set(), time.sleep(5)),
+        on_release=lambda mode: None,
+        on_toggle=lambda: None,
+        on_cancel=lambda: None,
+    )
+    manager.register({"push_to_talk": "right ctrl"})
+    dispatch = FakeHook.instances[-1].callback
+
+    dispatch(event("right ctrl", down=True))
+    dispatch(event("right ctrl", down=False))
+    begin = time.monotonic()
+    dispatch(event("right ctrl", down=True))  # arms; callback blocks for 5s
+    assert time.monotonic() - begin < 0.5, "dispatch must not wait for the callback"
+    assert started.wait(1.0)
