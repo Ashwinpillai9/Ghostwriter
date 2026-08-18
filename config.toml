@@ -154,8 +154,10 @@ buffer_width = 960
 # light on water and start covering what is underneath.
 intensity = 1.1
 # Crest colours: the deep water a crest sits in, and the lit edge of the crest itself.
-halos = ["#0c38e8", "#1044ff", "#2464ff", "#1852f6"]
-cores = ["#96e0ff", "#38bdf8", "#6ec8ff", "#56cdfc"]
+# Left unset, both follow `overlay.accent` above, so the ripple always matches the pill.
+# Set them to pin the wave to its own colours regardless of the accent, e.g.
+#   halos = ["#0c38e8"]
+#   cores = ["#96e0ff"]
 
 [output]
 # Paste via clipboard + Ctrl+V, then restore the previous clipboard contents.

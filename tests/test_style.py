@@ -69,10 +69,11 @@ def test_junk_wave_values_fall_back(key, junk):
 
 
 def test_a_junk_colour_inside_a_list_falls_back_to_that_slot_only():
+    # The good slots survive; only the unusable one is replaced, and it falls back to the
+    # accent-derived crest colour rather than to a blue from the original design.
     built = style(wave={"halos": ["#000000", "nope", "#ffffff"]})
-    default = WaveStyle().halos
     assert built.wave.halos[0] == (0, 0, 0)
-    assert built.wave.halos[1] == default[1]  # the bad one
+    assert built.wave.halos[1] == WaveStyle().halos[0]  # the bad one
     assert built.wave.halos[2] == (255, 255, 255)
 
 
@@ -99,3 +100,56 @@ def test_recording_wears_the_accent_and_other_states_do_not():
 def test_rgb_rejects_short_hex():
     with pytest.raises(ValueError):
         rgb("#fff")
+
+
+# --- the wave follows the accent ---------------------------------------------
+#
+# These go through config.load() rather than the raw-dict helper above, because the bug they
+# guard was in DEFAULTS: a default halos/cores list there meant cfg.get() never returned None,
+# so the derivation never ran and a purple pill still threw a blue ripple.
+
+
+def test_crest_colours_follow_the_accent_through_a_real_config(tmp_path):
+    from ghostwriter import config as config_module
+    from ghostwriter.style import wave_colors
+
+    path = tmp_path / "config.toml"
+    path.write_text('[overlay]\naccent = "#a855f7"\n', encoding="utf-8")
+    built = OverlayStyle.from_config(config_module.load(path))
+
+    halo, core = wave_colors("#a855f7")
+    assert built.wave.halos[0] == halo
+    assert built.wave.cores[0] == core
+
+
+def test_defaults_do_not_shadow_the_derivation(tmp_path):
+    from ghostwriter import config as config_module
+
+    # An empty file must still leave halos/cores unset so from_config derives them.
+    path = tmp_path / "config.toml"
+    path.write_text("", encoding="utf-8")
+    cfg = config_module.load(path)
+    assert cfg.get("overlay.wave.halos") is None
+    assert cfg.get("overlay.wave.cores") is None
+
+
+def test_an_explicit_palette_still_wins(tmp_path):
+    from ghostwriter import config as config_module
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[overlay]\naccent = "#a855f7"\n\n[overlay.wave]\nhalos = ["#000000"]\n',
+        encoding="utf-8",
+    )
+    built = OverlayStyle.from_config(config_module.load(path))
+    assert built.wave.halos[0] == (0, 0, 0), "an explicit colour must override the accent"
+
+
+def test_derived_crests_read_as_dark_water_and_a_lit_edge():
+    from ghostwriter.style import wave_colors
+
+    for accent in ("#38bdf8", "#a855f7", "#ef4444", "#22c55e"):
+        halo, core = wave_colors(accent)
+        base = rgb(accent)
+        assert sum(halo) < sum(base), f"{accent}: the halo must be deeper than the accent"
+        assert sum(core) > sum(base), f"{accent}: the core must be lighter than the accent"
