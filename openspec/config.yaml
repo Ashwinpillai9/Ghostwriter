@@ -1,0 +1,32 @@
+schema: spec-driven
+
+context: |
+  Ghostwriter — local push-to-talk dictation for Windows. A free Wispr Flow alternative:
+  hold a hotkey, talk, release, and the text is transcribed and pasted into whatever window
+  has focus. Nothing leaves the machine and there is no API key.
+
+  Stack: Python 3.12. faster-whisper/ctranslate2 (CUDA float16) for transcription, Silero VAD
+  via ONNX for the wake word and endpointing, sounddevice/PortAudio for capture, Pillow +
+  Win32 UpdateLayeredWindow for the always-on-top status pill, pystray for the tray, and an
+  in-repo WH_KEYBOARD_LL hook (ghostwriter/keys/) for global hotkeys.
+
+  Conventions:
+  - Every change starts on its own branch; never commit to main. See CLAUDE.md.
+  - Comments explain why, not what. The gotchas in CLAUDE.md are load-bearing — read them
+    before touching the overlay, the keyboard hook or the VAD paths.
+  - config.toml is heavily commented and treated as user-facing documentation. Anything that
+    writes it must preserve those comments.
+  - Tests stub audio, GPU and clipboard, so a green suite does not prove the app works. GUI,
+    hotkey and microphone paths need a real run (run.ps1).
+  - Prefer extending an existing seam over adding a parallel one. ghostwriter/keys/ and
+    ghostwriter/transcribe.py are the platform seams for a future macOS port.
+
+rules:
+  proposal:
+    - State what is explicitly NOT changing when a change touches the overlay, the keyboard
+      hook or the dictation path — those are the risky areas.
+  design:
+    - Record alternatives that were rejected and why, so they are not silently revisited.
+    - Call out where a mockup or older plan has drifted from the current code.
+  tasks:
+    - Include a verification group covering what automated tests cannot reach.

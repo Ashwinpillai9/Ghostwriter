@@ -6,6 +6,20 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+# Settings that cannot take effect until the application restarts, mapped to the wording used
+# when telling the user so. Changing any of them means rebuilding the dictation model, which can
+# be gigabytes and may be mid-transcription — deliberately left for a restart rather than swapped
+# underneath a running job.
+#
+# Lives here rather than on `App` so the settings window can ask what needs a restart without
+# importing the application — and with it Tk, the keyboard hook and the overlay.
+RESTART_ONLY: dict[str, str] = {
+    "model.name": "dictation model",
+    "model.device": "model device",
+    "model.compute_type": "model compute type",
+    "audio.sample_rate": "sample rate",
+}
+
 DEFAULTS: dict[str, Any] = {
     "hotkeys": {
         "push_to_talk": "right ctrl",

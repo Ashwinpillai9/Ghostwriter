@@ -2,6 +2,16 @@
 
 Local push-to-talk dictation for Windows. See README.md for what it does and how to run it.
 
+## Planning
+
+Planning lives in OpenSpec (`openspec/changes/`), not in ad-hoc markdown. `openspec list` shows
+what is open; `openspec show <change>` reads one. The `/opsx:*` commands and `openspec-*` skills
+in `.claude/` drive the workflow — propose, apply, archive.
+
+`openspec/changes/add-settings-window/` is the settings window's spec. Its `design.md` records
+the architecture and the decisions not to reverse; read it before changing anything under
+`ghostwriter/settings/`.
+
 ## Branch workflow
 
 Every feature, bug fix or improvement starts on its own branch — never commit to `main`.
@@ -46,6 +56,20 @@ hotkeys, the microphone or the overlay.
 
 ## Things that bite
 
+- **The settings window writes `config.toml` and nothing else.** It is a separate process
+  (`ghostwriter/settings/`, `python -m ghostwriter.settings`) with no channel back to the app —
+  `ConfigWatcher` noticing the save *is* the channel. That is why it works with the app closed,
+  and why it cannot break dictation. Do not add an IPC layer; if the window needs to know
+  something about the running app, have the app write it to a file.
+- **Anything the settings window needs from hardware lives in `settings/probes.py`**, and uses
+  its own resources: the level meter opens its own stream rather than borrowing `Recorder`, and
+  the wake-word test loads its own model rather than pausing the listener. Reaching into the
+  running app from there is how a settings window starts breaking dictation.
+- **The pill preview renders through `pill.py`.** Reimplementing the pill in CSS would drift
+  from the real one the first time either changed, and a preview that lies is worse than none.
+- **`settings/bridge.py` declares every editable key.** A path outside `ALL_KEYS` is refused, so
+  the page cannot write somewhere the window was never meant to reach. Adding a setting to the
+  UI means adding it there.
 - **`App.reload_config` is the single apply path for a settings change.** The tray's reload item
   and any settings UI both go through it, so "what does changing this actually do" is answered
   in one place and is testable without a UI (`tests/test_reload.py`). It works because the hot
