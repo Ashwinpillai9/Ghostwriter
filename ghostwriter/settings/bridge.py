@@ -277,6 +277,24 @@ class Bridge:
     def pill_preview(self, accent: str, state: str = "recording") -> dict[str, Any]:
         return {"image": probes.pill_preview(accent, state)}
 
+    # --- auto-start ------------------------------------------------------
+    #
+    # Deliberately not a config.toml key. Auto-start is a property of the machine, and
+    # config.toml is copied between machines and edited by hand; a stored preference that
+    # disagreed with Windows would be exactly the confusion this window exists to remove.
+
+    def autostart_state(self) -> dict[str, Any]:
+        from .. import autostart
+
+        return autostart.state()
+
+    def set_autostart(self, enabled: bool) -> dict[str, Any]:
+        from .. import autostart
+
+        ok, message = autostart.enable() if enabled else autostart.disable()
+        # Report the state Windows actually holds, not the one we asked for.
+        return {"ok": ok, "error": message, **autostart.state()}
+
     def close_probes(self) -> dict[str, Any]:
         """Release anything holding hardware. Called when the window is closing."""
         self._meter.stop()

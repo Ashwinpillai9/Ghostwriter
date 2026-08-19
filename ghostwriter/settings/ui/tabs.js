@@ -27,6 +27,45 @@ const PALETTE = ["#38bdf8", "#ef4444", "#22c55e", "#a855f7"];
 
 /* --- Keys ---------------------------------------------------------------- */
 
+/* Auto-start is the one control here that does not touch config.toml: it reads and writes
+ * Windows itself, so what it shows is what will actually happen at the next logon. */
+function autostartRow() {
+  const note = el("div", { class: "note" }, "");
+  const control = el("div", { class: "row-control" });
+
+  const paint = (state) => {
+    control.textContent = "";
+    note.textContent = state.available
+      ? "Runs with the privileges its hotkeys need, so they work over elevated windows too."
+      : state.reason;
+    if (!state.available) {
+      control.append(el("span", { class: "unit" }, "unavailable"));
+      return;
+    }
+    const button = el("button", {
+      class: "toggle", type: "button", role: "switch",
+      "aria-checked": String(state.enabled),
+      onclick: async () => {
+        button.disabled = true;
+        const next = await window.pywebview.api.set_autostart(!state.enabled);
+        button.disabled = false;
+        paint(next);
+        if (!next.ok && next.error) gw.say(next.error, "warn");
+        else gw.say(next.enabled ? "Will start with Windows" : "Will not start with Windows", "ok");
+      },
+    }, el("span", { class: "toggle-knob" }));
+    control.append(button);
+  };
+
+  window.pywebview.api.autostart_state().then(paint);
+
+  return el("div", { class: "row" },
+    el("div", { class: "row-text" },
+      el("div", { class: "row-label" }, "Start with Windows"),
+      note),
+    control);
+}
+
 function renderKeys() {
   fill("keys",
     card(
@@ -43,6 +82,7 @@ function renderKeys() {
         "Swallows the keypress so nothing else reacts. Turn off if a binding fights a shortcut you need.",
         toggle("hotkeys.suppress")),
     ),
+    card(autostartRow()),
     advanced("double-tap window 0.4s · matched on virtual-key codes, so left and right are distinct"),
   );
 }

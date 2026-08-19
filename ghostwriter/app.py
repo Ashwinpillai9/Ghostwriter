@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from . import config as config_module
-from . import inject, postprocess
+from . import bootstrap, inject, paths, postprocess
 from .audio import Recorder, resolve_device
 from .endpoint import SilenceEndpointer
 from .hotkeys import HotkeyManager
@@ -34,6 +34,9 @@ def beep(kind: str) -> None:
 
 class App:
     def __init__(self, cfg_path: Path | None = None):
+        # An installed build has no repository to read config.toml from, so first run copies
+        # the shipped template — comments and all, since those are the manual.
+        config_module.ensure_exists(cfg_path)
         self.cfg = config_module.load(cfg_path)
         self.sounds = self.cfg.get("output.sounds", True)
         self.min_duration = self.cfg.get("audio.min_duration_sec", 0.35)
@@ -206,9 +209,32 @@ class App:
                 wake.pause()
                 wake.resume()
 
+    # --- first run -------------------------------------------------------
+
+    def _bootstrap(self) -> None:
+        """Fetch what an installed build did not ship with, before the model is loaded.
+
+        Runs on the model-loading thread, so the pill can report progress while it happens.
+        A failure here is never fatal: no GPU means CPU transcription, and no network means it
+        says so and tries again next start.
+        """
+        model_name = self.cfg.get("model.name", "large-v3-turbo")
+        device = self.cfg.get("model.device", "cuda")
+        try:
+            if not bootstrap.needed(model_name, device):
+                return
+            log.info("first run: fetching what this machine needs")
+            bootstrap.run(
+                model_name, device,
+                on_progress=lambda message: self.overlay.set_state("transcribing", message),
+            )
+        except Exception:  # noqa: BLE001 - a bad first run must not stop the app starting
+            log.exception("first-run setup did not finish")
+
     # --- model -----------------------------------------------------------
 
     def load_model(self) -> None:
+        self._bootstrap()
         self.overlay.set_state("transcribing", "Loading model...")
         try:
             self.transcriber = Transcriber(
@@ -448,9 +474,9 @@ class App:
             self._focus_settings()
             return
         try:
-            self._settings = subprocess.Popen(  # noqa: S603 - our own module, no shell
-                [sys.executable, "-m", "ghostwriter.settings", str(self.cfg.path)],
-                cwd=str(Path(__file__).resolve().parent.parent),
+            self._settings = subprocess.Popen(  # noqa: S603 - our own executable, no shell
+                paths.launch_settings_command(self.cfg.path),
+                cwd=str(paths.program_dir()),
             )
         except Exception:  # noqa: BLE001 - a missing webview must not kill the tray
             log.exception("could not open the settings window")
@@ -544,12 +570,24 @@ class App:
         self.overlay.run()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for both windows.
+
+    A frozen build is a single executable with no `python -m`, so the settings window is
+    reached by re-launching this one with `--settings` rather than by naming a module.
+    """
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    App(cfg_path).run()
+    args = list(sys.argv[1:] if argv is None else argv)
+
+    if args and args[0] == "--settings":
+        from .settings.window import open_window
+
+        open_window(Path(args[1]) if len(args) > 1 else None)
+        return 0
+
+    App(Path(args[0]) if args else None).run()
     return 0
 
 

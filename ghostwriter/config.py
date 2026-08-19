@@ -139,7 +139,41 @@ def _merge(base: dict, override: dict) -> dict:
 
 
 def default_config_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "config.toml"
+    """Where `config.toml` lives.
+
+    Next to the code in a source checkout, and under `%APPDATA%` for an installed build — an
+    update replaces the program directory wholesale, so nothing the user owns may live there.
+    """
+    from .paths import config_path
+
+    return config_path()
+
+
+def template() -> str:
+    """The shipped `config.toml`, comments and all.
+
+    An installed build has no repository to copy from, and a settings file with no explanation
+    in it would be a worse starting point than the one this project has spent its life writing.
+    """
+    from .paths import resource_dir
+
+    shipped = resource_dir() / "config.toml"
+    if shipped.exists():
+        return shipped.read_text(encoding="utf-8")
+    return ""
+
+
+def ensure_exists(path: Path | None = None) -> Path:
+    """Create `config.toml` from the shipped template if it is not there yet."""
+    path = path or default_config_path()
+    if path.exists():
+        return path
+    body = template()
+    if not body:
+        return path  # Nothing to copy; DEFAULTS still give a working app.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
 def load(path: Path | None = None) -> Config:
