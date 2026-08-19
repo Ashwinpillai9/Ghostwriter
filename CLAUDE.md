@@ -4,9 +4,14 @@ Local push-to-talk dictation for Windows. See README.md for what it does and how
 
 ## Planned work
 
-- **Settings window** — designed but not built. The spec is `docs/settings-window.md`; read it
-  before starting anything in that area. It records the architecture (pywebview in a separate
-  process, driven entirely through `config.toml`) and the decisions not to reverse.
+Planning lives in OpenSpec (`openspec/changes/`), not in ad-hoc markdown. `openspec list` shows
+what is open; `openspec show <change>` reads one. The `/opsx:*` commands and `openspec-*` skills
+in `.claude/` drive the workflow — propose, apply, archive.
+
+- **Settings window** — designed, specced, not built: `openspec/changes/add-settings-window/`.
+  Read `proposal.md` and `design.md` before starting anything in that area. `design.md` records
+  the architecture (pywebview in a separate process, driven entirely through `config.toml`) and
+  the decisions not to reverse. Implementation goes through `/opsx:apply`, not freehand.
 
 ## Branch workflow
 
