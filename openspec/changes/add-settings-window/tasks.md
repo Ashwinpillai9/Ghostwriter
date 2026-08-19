@@ -1,11 +1,11 @@
 ## 1. Config store
 
-- [ ] 1.1 Add `tomlkit` to `pyproject.toml` dependencies
-- [ ] 1.2 Write `ghostwriter/settings/store.py`: load `config.toml` with tomlkit, dotted-path `get`/`set`, atomic `save` (temp file then replace)
-- [ ] 1.3 Create a missing section or key on `set` rather than failing
-- [ ] 1.4 Detect external modification so an open window can reload rather than clobber
-- [ ] 1.5 Tests: comments and ordering survive a set+save; untouched keys are byte-identical; a missing table is created; a save is atomic
-- [ ] 1.6 Test against the real `config.toml`, not only a synthetic fixture — this is what caught the DEFAULTS-shadowing bug in the wave colours
+- [x] 1.1 Add `tomlkit` to `pyproject.toml` dependencies
+- [x] 1.2 Write `ghostwriter/settings/store.py`: load `config.toml` with tomlkit, dotted-path `get`/`set`, atomic `save` (temp file then replace)
+- [x] 1.3 Create a missing section or key on `set` rather than failing
+- [x] 1.4 Detect external modification so an open window can reload rather than clobber
+- [x] 1.5 Tests: comments and ordering survive a set+save; untouched keys are byte-identical; a missing table is created; a save is atomic
+- [x] 1.6 Test against the real `config.toml`, not only a synthetic fixture — this is what caught the DEFAULTS-shadowing bug in the wave colours
 
 ## 2. Window shell
 

@@ -11,6 +11,8 @@ dependencies = [
     "pyperclip>=1.9.0",
     "pystray>=0.19.5",
     "pillow>=10.4",
+    # Round-trips config.toml's comments and formatting; tomllib can only read.
+    "tomlkit>=0.13",
     # CTranslate2 links against cuBLAS/cuDNN at runtime but does not bundle them.
     "nvidia-cublas-cu12>=12.8",
     "nvidia-cudnn-cu12>=9.7,<10",
