@@ -84,4 +84,4 @@
 - [x] 10.4 Confirm a settings-process crash leaves dictation, hotkeys and the overlay working
 - [x] 10.5 Confirm an edit made in an external editor while the window is open is reflected, not clobbered
 - [x] 10.6 Update `README.md` and `CLAUDE.md` to describe the settings window
-- [ ] 10.7 Archive this change (`openspec archive add-settings-window`) so its spec becomes part of the project's main specs
+- [x] 10.7 Archive this change (`openspec archive add-settings-window`) so its spec becomes part of the project's main specs
