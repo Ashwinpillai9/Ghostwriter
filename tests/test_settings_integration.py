@@ -161,12 +161,15 @@ def test_an_external_edit_is_not_clobbered_by_the_window(wired):
 
 def test_the_window_reflects_an_external_edit_on_reload(wired):
     bridge, _app = wired
+    # Replace whatever the accent currently is, rather than a hardcoded colour: this runs
+    # against the repo's real config.toml, whose values change as the app is used.
+    current = bridge.load()["values"]["overlay.accent"]
     text = bridge.store.path.read_text(encoding="utf-8")
+    assert f'accent = "{current}"' in text
     bridge.store.path.write_text(
-        text.replace('accent = "#a855f7"', 'accent = "#111111"')
-            .replace('accent = "#38bdf8"', 'accent = "#111111"'),
-        encoding="utf-8",
+        text.replace(f'accent = "{current}"', 'accent = "#111111"', 1), encoding="utf-8"
     )
+
     assert bridge.external_change() is True
     assert bridge.reload()["values"]["overlay.accent"] == "#111111"
 
