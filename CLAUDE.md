@@ -56,6 +56,17 @@ hotkeys, the microphone or the overlay.
 
 ## Things that bite
 
+- **A frozen build and a source checkout differ in exactly three places**, all funnelled through
+  `ghostwriter/paths.py`: where `config.toml` lives, how the settings window is launched, and
+  where the CUDA runtime is found. Decide a path there, never inline. Two more traps that only
+  appear in a built copy: PyInstaller runs the entry script as top-level `__main__`, so
+  `ghostwriter/__main__.py` must use an **absolute** import; and it unpacks data files into
+  `_internal/`, so shipped files are read from `paths.resource_dir()`, not `program_dir()`.
+- **Auto-start is a Task Scheduler logon task with `/rl highest`,** not a Run key. That is not
+  a preference: Windows will not deliver input to a lower-privilege process, so without the
+  elevation the hotkeys are dead over any elevated window. It is also the one setting that is
+  **not** in `config.toml` — it is a property of the machine, and the file gets copied between
+  machines, so `autostart.py` asks Windows every time rather than remembering.
 - **The settings window writes `config.toml` and nothing else.** It is a separate process
   (`ghostwriter/settings/`, `python -m ghostwriter.settings`) with no channel back to the app —
   `ConfigWatcher` noticing the save *is* the channel. That is why it works with the app closed,

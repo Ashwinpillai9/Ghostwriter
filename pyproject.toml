@@ -21,6 +21,10 @@ dependencies = [
     "nvidia-cudnn-cu12>=9.7,<10",
 ]
 
+[project.optional-dependencies]
+# Build-time only: produces the installable Windows bundle. Not needed to run from source.
+build = ["pyinstaller>=6.0"]
+
 [project.scripts]
 ghostwriter = "ghostwriter.app:main"
 
