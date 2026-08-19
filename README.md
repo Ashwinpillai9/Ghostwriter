@@ -65,6 +65,28 @@ release to stop and paste.
 
 All of this, plus the model and vocabulary, is configurable in `config.toml`.
 
+## Settings window
+
+The tray menu's **Settings** opens a window over the same `config.toml`, with seven tabs — Keys,
+Wake word, Model, Stopping, Look, Text and Mic. It is worth using for the settings you cannot
+tune by reading:
+
+- **Mic** shows a live input level and will measure your room, then suggest the thresholds that
+  suit it — the same measurement `scripts\mic_check.py` runs.
+- **Wake word** has a *Try it* button that records you and reports what it heard and how closely
+  it matched, so you can tune the sensitivity against your own voice.
+- **Look** previews the status pill in the colour you are choosing, rendered by the real pill
+  rather than an imitation of it.
+- **Model** shows which models are already downloaded and which are not, and says plainly when a
+  change needs a restart.
+
+It runs as its own process and talks to Ghostwriter only by writing the config file, so it works
+whether or not Ghostwriter is running, and closing or crashing it cannot interrupt dictation.
+`config.toml` stays authoritative — hand-editing it is still a first-class route, and the window
+notices if you do.
+
+Run it on its own with `.venv\Scripts\python.exe -m ghostwriter.settings`.
+
 **Applying changes:** just save `config.toml`. Ghostwriter notices about half a second later and
 applies almost everything live — hotkeys, wake word, endpointing, overlay colours and animation,
 vocabulary, post-processing and the microphone — then says so on the pill. The tray menu's
