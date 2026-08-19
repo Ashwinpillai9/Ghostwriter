@@ -109,12 +109,19 @@ function slider(path, { min, max, step = 0.01, format = (v) => v.toFixed(2), end
 
 /* --- text and number fields ---------------------------------------------- */
 
-function field(path, { width = 150, type = "text", parse = (v) => v, validate, mono = true } = {}) {
+function field(
+  path,
+  { width = 150, exact = false, type = "text", parse = (v) => v, validate, mono = true } = {},
+) {
   const input = el("input", {
     type: type === "number" ? "text" : type,   // keep our own parsing, not the browser's
     class: "field" + (mono ? " mono" : ""),
     value: String(gw.value(path) ?? ""),
-    style: `min-width:${width}px`,
+    // `exact` sets a real width. min-width alone cannot shrink an <input> below the ~20
+    // characters its `size` attribute defaults to, which left short numbers sitting in boxes
+    // several times wider than their contents.
+    style: exact ? `width:${width}px` : `min-width:${width}px`,
+    size: exact ? "4" : null,
   });
 
   const revert = () => { input.value = String(gw.value(path) ?? ""); input.classList.remove("is-bad"); };
@@ -151,6 +158,7 @@ function field(path, { width = 150, type = "text", parse = (v) => v, validate, m
 const numberField = (path, opts = {}) =>
   field(path, {
     width: 70,
+    exact: true,   // numbers here are short; the box should fit them, not the default 20 chars
     parse: (raw) => {
       const value = Number(raw);
       if (raw === "" || Number.isNaN(value)) throw new Error("not a number");

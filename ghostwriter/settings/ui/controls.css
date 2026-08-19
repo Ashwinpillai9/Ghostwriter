@@ -225,8 +225,16 @@
 
 /* --- the stopping sentence ----------------------------------------------- */
 
-.sentence { margin: 0; font-size: 15px; line-height: 2.1; color: rgba(232, 233, 236, 0.88); }
-.sentence .field { font-size: 14px; padding: 3px 8px; text-align: center; }
+.sentence { margin: 0; font-size: 15px; line-height: 2.2; color: rgba(232, 233, 236, 0.88); }
+.sentence .field {
+  font-size: 14px;
+  padding: 3px 10px;
+  text-align: center;
+  /* The boxes sit inside a sentence, so they need room to read as words in it rather than as
+     text crammed against the ones either side. */
+  margin: 0 6px;
+  vertical-align: baseline;
+}
 
 /* --- wake-word trial ----------------------------------------------------- */
 
