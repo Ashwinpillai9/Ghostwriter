@@ -2,6 +2,12 @@
 
 Local push-to-talk dictation for Windows. See README.md for what it does and how to run it.
 
+## Planned work
+
+- **Settings window** — designed but not built. The spec is `docs/settings-window.md`; read it
+  before starting anything in that area. It records the architecture (pywebview in a separate
+  process, driven entirely through `config.toml`) and the decisions not to reverse.
+
 ## Branch workflow
 
 Every feature, bug fix or improvement starts on its own branch — never commit to `main`.
