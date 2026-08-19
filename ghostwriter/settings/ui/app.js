@@ -111,10 +111,36 @@ async function watchForExternalEdits() {
 
 /* --- boot ---------------------------------------------------------------- */
 
-window.addEventListener("pywebviewready", async () => {
-  adopt(await window.pywebview.api.load());
-  setInterval(watchForExternalEdits, 1500);
-  document.dispatchEvent(new CustomEvent("ready"));
+/* Anything that throws while building a tab should be visible, not swallowed into a blank
+ * panel. Collected so a headless check can read them back too. */
+window.__errors = [];
+window.addEventListener("error", (event) => {
+  window.__errors.push(String(event.message));
+  say("Something failed to render — see the console", "bad");
 });
+window.addEventListener("unhandledrejection", (event) => {
+  window.__errors.push(String(event.reason));
+});
+
+let booted = false;
+
+async function boot() {
+  if (booted) return;
+  booted = true;
+  try {
+    adopt(await window.pywebview.api.load());
+    setInterval(watchForExternalEdits, 1500);
+    document.dispatchEvent(new CustomEvent("ready"));
+  } catch (error) {
+    booted = false;
+    window.__errors.push(String(error));
+    say("Could not read config.toml", "bad");
+  }
+}
+
+/* `pywebviewready` may already have fired by the time this script runs, in which case waiting
+ * for it means waiting forever. Check for the API as well. */
+window.addEventListener("pywebviewready", boot);
+if (window.pywebview && window.pywebview.api) boot();
 
 window.gw = { state, value, isExplicit, commit, refresh, say, showTab };

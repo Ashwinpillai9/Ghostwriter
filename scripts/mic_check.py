@@ -1,57 +1,28 @@
 """Measures your microphone and tells you whether hands-free dictation will stop on its own.
 
-Records your room in silence, then while you speak, and compares the two the way the
-endpointer does. Prints a verdict and, if the current settings won't work, the value to use.
+Records your room in silence, then while you speak, and compares the two the way the endpointer
+does. Prints a verdict and, if the current settings won't work, the value to use.
 
     .venv\\Scripts\\python.exe scripts\\mic_check.py
     .venv\\Scripts\\python.exe scripts\\mic_check.py --seconds 10
+
+The measurement itself lives in `ghostwriter/roomcheck.py`, shared with the settings window's
+Mic tab so the two cannot disagree about whether a room is usable.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
-import numpy as np
 import sounddevice as sd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ghostwriter import config as config_module  # noqa: E402
+from ghostwriter import roomcheck  # noqa: E402
 from ghostwriter.audio import resolve_device  # noqa: E402
-from ghostwriter.endpoint import VAD_SAMPLES  # noqa: E402
-
-RATE = 16000
-
-
-def record(seconds: float, device) -> np.ndarray:
-    frames: list[np.ndarray] = []
-    with sd.InputStream(
-        samplerate=RATE, channels=1, dtype="float32", device=device, blocksize=VAD_SAMPLES,
-        callback=lambda indata, *_: frames.append(indata[:, 0].copy()),
-    ):
-        for remaining in range(int(seconds), 0, -1):
-            print(f"  {remaining}... ", end="", flush=True)
-            time.sleep(1)
-    print()
-    return np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
-
-
-def speech_probability(model, audio: np.ndarray) -> np.ndarray:
-    usable = len(audio) - len(audio) % VAD_SAMPLES
-    if usable < VAD_SAMPLES:
-        return np.zeros(1)
-    return np.asarray(model(audio[:usable], num_samples=VAD_SAMPLES)).reshape(-1)
-
-
-def longest_run(mask: np.ndarray, seconds_each: float) -> float:
-    best = run = 0
-    for flag in mask:
-        run = run + 1 if flag else 0
-        best = max(best, run)
-    return best * seconds_each
 
 
 def main() -> int:
@@ -64,51 +35,54 @@ def main() -> int:
     timeout = cfg.get("endpoint.silence_timeout_sec", 1.2)
     device = resolve_device(cfg.get("audio.device", ""))
 
-    from faster_whisper.vad import get_vad_model
-
-    model = get_vad_model()
-    frame_sec = VAD_SAMPLES / RATE
-
-    print(f"Mic: {sd.query_devices(device, 'input')['name'] if device is not None else 'system default'}")
+    name = sd.query_devices(device, "input")["name"] if device is not None else "system default"
+    print(f"Mic: {name}")
     print(f"Settings: vad_threshold={threshold}  silence_timeout_sec={timeout}\n")
 
-    print(f"1/2  Stay SILENT for {args.seconds:.0f}s — measuring your room.")
-    quiet = speech_probability(model, record(args.seconds, device))
-    print(f"\n2/2  Now TALK for {args.seconds:.0f}s — say anything.")
-    talking = speech_probability(model, record(args.seconds, device))
+    printed = {"phase": None}
 
-    quiet_hit = float((quiet >= threshold).mean())
-    talk_hit = float((talking >= threshold).mean())
-    gap = longest_run(quiet < threshold, frame_sec)
+    def on_phase(phase: str, remaining: int) -> None:
+        if printed["phase"] != phase:
+            printed["phase"] = phase
+            if phase == "quiet":
+                print(f"1/2  Stay SILENT for {args.seconds:.0f}s — measuring your room.")
+            else:
+                print(f"\n\n2/2  Now TALK for {args.seconds:.0f}s — say anything.")
+        print(f"  {remaining}... ", end="", flush=True)
 
-    print("\n--- results ---")
-    print(f"  silent room : median speech score {np.median(quiet):.3f}, "
-          f"{quiet_hit * 100:.0f}% of frames counted as speech")
-    print(f"  you talking : median speech score {np.median(talking):.3f}, "
-          f"{talk_hit * 100:.0f}% of frames counted as speech")
-    print(f"  longest quiet stretch: {gap:.2f}s (needs {timeout:.2f}s to stop)\n")
+    report = roomcheck.measure(
+        seconds=args.seconds,
+        device=device,
+        threshold=threshold,
+        silence_timeout=timeout,
+        on_phase=on_phase,
+    )
 
-    if gap >= timeout and talk_hit > 0.4:
+    print("\n\n--- results ---")
+    print(f"  silent room : median speech score {report.quiet_median:.3f}, "
+          f"{report.quiet_hit * 100:.0f}% of frames counted as speech")
+    print(f"  you talking : median speech score {report.talking_median:.3f}, "
+          f"{report.talking_hit * 100:.0f}% of frames counted as speech")
+    print(f"  longest quiet stretch: {report.longest_quiet:.2f}s "
+          f"(needs {report.needed_quiet:.2f}s to stop)")
+    print(f"  loudness: room {report.quiet_rms:.4f}, speech {report.talking_rms:.4f} "
+          f"({report.headroom:.0f}x headroom)\n")
+
+    if report.ok:
         print("VERDICT: fine. Dictation will stop on its own when you stop talking.")
-        return 0
+    else:
+        print(f"VERDICT: {report.message}")
 
-    if gap < timeout:
-        # Pick a threshold above the room's noise but below the speaker's voice.
-        for candidate in [round(x, 2) for x in np.arange(threshold, 0.96, 0.05)]:
-            if longest_run(quiet < candidate, frame_sec) >= timeout * 1.5:
-                if float((talking >= candidate).mean()) > 0.35:
-                    print("VERDICT: your room is too noisy for the current threshold.")
-                    print(f"  Set endpoint.vad_threshold = {candidate} in config.toml.")
-                    return 1
-                break
-        print("VERDICT: this room's background is too close to speech to separate reliably.")
-        print("  Options: use a headset mic, set audio.device to a quieter input, or use the")
-        print(f"  stop key ({cfg.get('endpoint.stop_key')}) to end dictation yourself.")
-        return 1
+    for key, value in report.suggestions.items():
+        current = cfg.get(key)
+        if value != current:
+            print(f"  Set {key} = {value} in config.toml (currently {current}).")
 
-    print("VERDICT: your speech is scoring too low — the threshold is above your voice.")
-    print(f"  Try lowering endpoint.vad_threshold below {np.median(talking):.2f}.")
-    return 1
+    if not report.suggestions and not report.ok:
+        print(f"  Options: a headset mic, a quieter input, or the stop key "
+              f"({cfg.get('endpoint.stop_key')}).")
+
+    return 0 if report.ok else 1
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from .. import config as config_module
+from . import probes
 from .store import ConfigStore
 
 log = logging.getLogger(__name__)
@@ -101,6 +102,8 @@ class Bridge:
 
     def __init__(self, store: ConfigStore):
         self.store = store
+        self._meter = probes.LevelMeter()
+        self._phase: dict = {"phase": "idle", "remaining": 0}
 
     # --- reading ---------------------------------------------------------
 
@@ -179,3 +182,102 @@ class Bridge:
             log.exception("could not write %s", self.store.path)
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "changed": [path], "restartRequired": []}
+
+    # --- hardware --------------------------------------------------------
+    #
+    # All of this runs on the settings process's own resources. It never reaches into the
+    # running application, which is what keeps a settings window unable to break dictation.
+
+    def input_devices(self) -> list[dict[str, Any]]:
+        return probes.input_devices()
+
+    def start_meter(self, device_name: str = "") -> dict[str, Any]:
+        from ..audio import resolve_device
+
+        started = self._meter.start(resolve_device(device_name or ""))
+        return {"ok": started}
+
+    def meter(self) -> dict[str, float]:
+        return self._meter.read()
+
+    def stop_meter(self) -> dict[str, Any]:
+        self._meter.stop()
+        return {"ok": True}
+
+    def room_check(self, seconds: float = 6.0) -> dict[str, Any]:
+        """Measure the room. Blocks for roughly `2 * seconds`; the page shows progress."""
+        from ..audio import resolve_device
+        from .. import roomcheck
+
+        was_running = self._meter.running
+        self._meter.stop()  # one stream at a time on the same device
+        self._phase = {"phase": "starting", "remaining": 0}
+        try:
+            report = roomcheck.measure(
+                seconds=seconds,
+                device=resolve_device(self.store.get("audio.device", "") or ""),
+                threshold=float(self.load()["values"]["endpoint.vad_threshold"]),
+                silence_timeout=float(self.load()["values"]["endpoint.silence_timeout_sec"]),
+                on_phase=lambda phase, remaining: self._phase.update(
+                    phase=phase, remaining=remaining
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - no microphone is an answer, not a crash
+            log.exception("room check failed")
+            return {"ok": False, "error": str(exc)}
+        finally:
+            self._phase = {"phase": "done", "remaining": 0}
+            if was_running:
+                self._meter.start(resolve_device(self.store.get("audio.device", "") or ""))
+
+        return {
+            "ok": True,
+            "verdict": report.verdict,
+            "message": report.message,
+            "quietRms": report.quiet_rms,
+            "talkingRms": report.talking_rms,
+            "headroom": report.headroom,
+            "quietMedian": report.quiet_median,
+            "talkingMedian": report.talking_median,
+            "longestQuiet": report.longest_quiet,
+            "neededQuiet": report.needed_quiet,
+            "suggestions": report.suggestions,
+        }
+
+    def room_check_progress(self) -> dict[str, Any]:
+        return self._phase
+
+    def test_wake_word(self, seconds: float = 4.0) -> dict[str, Any]:
+        values = self.load()["values"]
+        was_running = self._meter.running
+        self._meter.stop()
+        try:
+            from ..audio import resolve_device
+
+            return probes.test_wake_word(
+                phrase=values["wakeword.phrase"],
+                aliases=values["wakeword.aliases"] or [],
+                threshold=float(values["wakeword.threshold"]),
+                seconds=seconds,
+                device=resolve_device(values["audio.device"] or ""),
+                model_name=values["wakeword.model"],
+                compute_type=values["wakeword.compute_type"],
+            )
+        finally:
+            if was_running:
+                self.start_meter(values["audio.device"] or "")
+
+    def model_catalog(self) -> dict[str, Any]:
+        values = self.load()["values"]
+        return {
+            "models": probes.model_catalog(values["model.name"]),
+            "gpu": probes.gpu_info(),
+        }
+
+    def pill_preview(self, accent: str, state: str = "recording") -> dict[str, Any]:
+        return {"image": probes.pill_preview(accent, state)}
+
+    def close_probes(self) -> dict[str, Any]:
+        """Release anything holding hardware. Called when the window is closing."""
+        self._meter.stop()
+        return {"ok": True}
