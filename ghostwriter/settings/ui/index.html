@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ghostwriter Settings</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="mark">
+  <span class="mark-bar"></span>
+  <span class="mark-name">ghostwriter</span>
+  <span class="mark-path" id="config-path"></span>
+</header>
+
+<nav class="dock">
+  <div class="dock-inner" id="dock" role="tablist">
+    <button class="tab is-active" role="tab" data-tab="keys">Keys</button>
+    <button class="tab" role="tab" data-tab="wakeword">Wake word</button>
+    <button class="tab" role="tab" data-tab="model">Model</button>
+    <button class="tab" role="tab" data-tab="stopping">Stopping</button>
+    <button class="tab" role="tab" data-tab="look">Look</button>
+    <button class="tab" role="tab" data-tab="text">Text</button>
+    <button class="tab" role="tab" data-tab="mic">Mic</button>
+  </div>
+</nav>
+
+<main id="panels">
+  <section class="panel is-active" data-panel="keys">
+    <h1>Keys</h1>
+    <p class="lede">How you start and stop dictating.</p>
+    <div class="stub">Not built yet.</div>
+  </section>
+
+  <section class="panel" data-panel="wakeword">
+    <h1>Wake word</h1>
+    <p class="lede">Start dictating without touching the keyboard.</p>
+    <div class="stub">Not built yet.</div>
+  </section>
+
+  <section class="panel" data-panel="model">
+    <h1>Model</h1>
+    <p class="lede">Bigger models hear you better and take longer. Everything runs on this PC.</p>
+    <div class="stub">Not built yet.</div>
+  </section>
+
+  <section class="panel" data-panel="stopping">
+    <h1>Stopping</h1>
+    <p class="lede">How a hands-free sentence ends. Push-to-talk always ends when you let go.</p>
+    <div class="stub">Not built yet.</div>
+  </section>
+
+  <section class="panel" data-panel="look">
+    <h1>Look</h1>
+    <p class="lede">The pill that appears above your taskbar.</p>
+    <div class="stub">Not built yet.</div>
+  </section>
+
+  <section class="panel" data-panel="text">
+    <h1>Text</h1>
+    <p class="lede">What happens between hearing you and the words appearing.</p>
+    <div class="stub">Not built yet.</div>
+  </section>
+
+  <section class="panel" data-panel="mic">
+    <h1>Mic</h1>
+    <p class="lede">Which microphone Ghostwriter listens to, and how your room sounds to it.</p>
+    <div class="stub">Not built yet.</div>
+  </section>
+</main>
+
+<footer class="status" id="status" aria-live="polite"></footer>
+
+<script src="app.js"></script>
+</body>
+</html>

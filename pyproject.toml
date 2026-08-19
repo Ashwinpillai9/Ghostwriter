@@ -13,6 +13,9 @@ dependencies = [
     "pillow>=10.4",
     # Round-trips config.toml's comments and formatting; tomllib can only read.
     "tomlkit>=0.13",
+    # The settings window. Renders through the OS webview (WebView2 on Windows), so it does
+    # not bundle a browser.
+    "pywebview>=6.0",
     # CTranslate2 links against cuBLAS/cuDNN at runtime but does not bundle them.
     "nvidia-cublas-cu12>=12.8",
     "nvidia-cudnn-cu12>=9.7,<10",

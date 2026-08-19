@@ -9,14 +9,14 @@
 
 ## 2. Window shell
 
-- [ ] 2.1 Add `pywebview` to `pyproject.toml` dependencies
-- [ ] 2.2 Create `ghostwriter/settings/` as a process entry point runnable standalone (`python -m ghostwriter.settings`)
-- [ ] 2.3 Build the shell from the design: 900x640, dark palette, pill-shaped tab dock, seven empty tabs
-- [ ] 2.4 Decide window chrome — frameless to match the design, or standard OS title bar. Record the decision in `design.md`
-- [ ] 2.5 Python/JS bridge: read config, write config, and push a value-changed event to the page
-- [ ] 2.6 Write on commit (blur, Enter, slider release), never per keystroke
-- [ ] 2.7 Reload the page's values when `config.toml` changes underneath the window
-- [ ] 2.8 Add a "Settings" tray item in `app.py` that launches the process, focusing the existing window if one is open
+- [x] 2.1 Add `pywebview` to `pyproject.toml` dependencies
+- [x] 2.2 Create `ghostwriter/settings/` as a process entry point runnable standalone (`python -m ghostwriter.settings`)
+- [x] 2.3 Build the shell from the design: 900x640, dark palette, pill-shaped tab dock, seven empty tabs
+- [x] 2.4 Decide window chrome — frameless to match the design, or standard OS title bar. Record the decision in `design.md`
+- [x] 2.5 Python/JS bridge: read config, write config, and push a value-changed event to the page
+- [x] 2.6 Write on commit (blur, Enter, slider release), never per keystroke
+- [x] 2.7 Reload the page's values when `config.toml` changes underneath the window
+- [x] 2.8 Add a "Settings" tray item in `app.py` that launches the process, focusing the existing window if one is open
 
 ## 3. Keys tab
 

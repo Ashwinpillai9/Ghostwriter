@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import subprocess
 import sys
 import threading
 import winsound
@@ -55,6 +56,7 @@ class App:
         self._stop_requested = False
         self._stop_key_handle = None
         self.watcher: ConfigWatcher | None = None
+        self._settings: subprocess.Popen | None = None
 
         self.endpointer = SilenceEndpointer(
             level_source=lambda: self.recorder.level,
@@ -94,14 +96,9 @@ class App:
 
     # --- config reload ---------------------------------------------------
 
-    # Changing these means rebuilding the dictation model, which can be gigabytes and may be
-    # mid-transcription. Deliberately left for a restart rather than swapped underneath a job.
-    RESTART_ONLY = {
-        "model.name": "dictation model",
-        "model.device": "model device",
-        "model.compute_type": "model compute type",
-        "audio.sample_rate": "sample rate",
-    }
+    # Defined in `config` so the settings window can read it without importing the app. Kept
+    # here as well because it reads as part of reload_config's contract.
+    RESTART_ONLY = config_module.RESTART_ONLY
 
     # Rebuilding the wake listener costs a model load, so it is only done when one of these
     # changed; the rest of [wakeword] is applied by assignment.
@@ -399,6 +396,7 @@ class App:
                 )
             )
         items += [
+            pystray.MenuItem("Settings", self.open_settings),
             pystray.MenuItem("Move overlay", self.move_overlay),
             pystray.MenuItem("Open config.toml", self.open_config),
             pystray.MenuItem("Reload config", self.reload_from_tray),
@@ -438,6 +436,39 @@ class App:
     def move_overlay(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray signature
         self.overlay.start_move()
 
+    def open_settings(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray signature
+        """Launch the settings window as a separate process.
+
+        Separate because its webview wants the main thread, which the overlay's Tk loop already
+        owns — and because a crash in the settings UI then cannot take dictation down with it.
+        There is no channel between the two: the window edits config.toml and `self.watcher`
+        notices.
+        """
+        if self._settings is not None and self._settings.poll() is None:
+            self._focus_settings()
+            return
+        try:
+            self._settings = subprocess.Popen(  # noqa: S603 - our own module, no shell
+                [sys.executable, "-m", "ghostwriter.settings", str(self.cfg.path)],
+                cwd=str(Path(__file__).resolve().parent.parent),
+            )
+        except Exception:  # noqa: BLE001 - a missing webview must not kill the tray
+            log.exception("could not open the settings window")
+            self.overlay.set_state("error", "Could not open settings")
+
+    def _focus_settings(self) -> None:
+        """Bring an already-open settings window to the front instead of opening another."""
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            handle = user32.FindWindowW(None, "Ghostwriter Settings")
+            if handle:
+                user32.ShowWindow(handle, 9)  # SW_RESTORE, in case it is minimised
+                user32.SetForegroundWindow(handle)
+        except Exception:  # noqa: BLE001 - focusing is a nicety, never worth an error
+            log.debug("could not focus the settings window", exc_info=True)
+
     def reload_from_tray(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray signature
         """Reload config.toml, reporting the outcome on the pill rather than in the log."""
         self.announce_reload(saved=False)
@@ -467,6 +498,9 @@ class App:
 
     def quit(self, icon=None, item=None) -> None:  # noqa: ARG002 - pystray callback signature
         self.jobs.put(None)
+        if self._settings is not None and self._settings.poll() is None:
+            # The settings window is its own process; closing the tray should not strand it.
+            self._settings.terminate()
         if self.watcher is not None:
             self.watcher.stop()
         if self.wake is not None:

@@ -48,6 +48,28 @@ A separate process is required rather than merely convenient: Tk's `mainloop` ho
 
 *Accepted cost:* two UI paradigms in one codebase — Tk plus Pillow for the overlay, web for settings. This is a real maintenance cost, accepted because the two have genuinely different requirements: one is a 60 fps always-on HUD needing per-pixel alpha, the other is an occasional dense form.
 
+### A standard OS title bar, not the mockup's custom chrome
+
+The design draws its own title strip with minimise and close buttons. The window uses a normal
+titled window instead, dark-themed inside.
+
+Frameless was the closer match and pywebview supports it well, but a custom title bar means
+owning drag, the window buttons, and the loss of edge-snapping and the system menu — for a
+settings screen the user opens occasionally, that is maintenance without a return. The in-page
+accent mark is kept; the mockup's window buttons are dropped, since the real ones sit above.
+
+*Revisit if* the window ever needs to look like part of the overlay rather than part of the
+desktop.
+
+### Reached from the tray only
+
+A "Settings" item in the existing tray menu, next to "Open config.toml", which stays — the file
+remains authoritative and hand-editing it is still a first-class route.
+
+No global hotkey for it. Bound keys are suppressed from every other program while Ghostwriter
+runs, and claiming another one for a window opened occasionally is the exact cost the Right Ctrl
+work was about avoiding.
+
 ### tomlkit for writing
 
 `config.py`'s `load()` merges the file with built-in `DEFAULTS`, which is right for reading and useless for writing: dumping it back would flatten every default into the user's file and destroy the comments, which this project treats as documentation. `tomlkit` round-trips comments and formatting, so only the keys actually touched are edited.
