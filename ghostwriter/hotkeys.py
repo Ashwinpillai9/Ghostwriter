@@ -143,7 +143,18 @@ class HotkeyManager:
             # Transient bindings outlive a re-register: an utterance in flight keeps its stop
             # key even if the settings window rewrites the configured chords underneath it.
             temporary = [b for b in self._bindings if b.kind == "tap"]
-            self._bindings = [b for b in bindings if b is not None] + temporary
+            live = {(b.chord, b.kind): b for b in self._bindings}
+            fresh = [b for b in bindings if b is not None]
+            for binding in fresh:
+                # Carry the hold state of an unchanged chord. Without this, re-registering
+                # while a key is down loses `held`, so its release is ignored and a recording
+                # started by it never stops.
+                previous = live.get((binding.chord, binding.kind))
+                if previous is not None:
+                    binding.held = previous.held
+                    binding.armed = previous.armed
+                    binding.last_up = previous.last_up
+            self._bindings = fresh + temporary
         if self._hook is None:
             self._hook = keys.Hook(self._on_event)
             self._hook.start()

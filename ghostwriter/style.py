@@ -10,6 +10,7 @@ an exception inside the render loop several hundred times a second.
 
 from __future__ import annotations
 
+import colorsys
 import logging
 import math
 from dataclasses import dataclass, field
@@ -29,9 +30,8 @@ DEFAULT_COLORS = {
     "moving": "#38bdf8",
 }
 
-# Deep blues from the design's conic gradient, with brighter cores sampled off the reference.
-DEFAULT_HALOS = ("#0c38e8", "#1044ff", "#2464ff", "#1852f6")
-DEFAULT_CORES = ("#96e0ff", "#38bdf8", "#6ec8ff", "#56cdfc")
+# Crest colours are derived from the accent (see `wave_colors`) rather than being a fixed
+# palette, so the ripple always matches the pill.
 
 
 def rgb(hex_color: str) -> tuple[int, int, int]:
@@ -39,6 +39,33 @@ def rgb(hex_color: str) -> tuple[int, int, int]:
     if len(value) != 6:
         raise ValueError(f"expected #rrggbb, got {hex_color!r}")
     return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def _hex(color: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*color)
+
+
+def _deepen(color: tuple[int, int, int]) -> tuple[int, int, int]:
+    """The dark water a crest sits in: same hue, richer and darker."""
+    hue, saturation, value = colorsys.rgb_to_hsv(*(c / 255 for c in color))
+    deeper = colorsys.hsv_to_rgb(hue, min(1.0, saturation * 1.2), value * 0.82)
+    return tuple(round(c * 255) for c in deeper)  # type: ignore[return-value]
+
+
+def _lighten(color: tuple[int, int, int], amount: float = 0.45) -> tuple[int, int, int]:
+    """The lit edge of a crest: the accent mixed toward white."""
+    return tuple(round(c + (255 - c) * amount) for c in color)  # type: ignore[return-value]
+
+
+def wave_colors(accent: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """Crest colours derived from the pill's accent, as (halo, core).
+
+    The wave is the pill's activation spreading across the display, so it has to wear the same
+    colour — a purple pill throwing a blue ripple reads as two unrelated things. Hue is
+    preserved rather than shifted, so this holds for any accent, not just the design's blue.
+    """
+    base = rgb(accent)
+    return _deepen(base), _lighten(base)
 
 
 def _color(value, default: str, where: str) -> str:
@@ -114,11 +141,14 @@ class WaveStyle:
     # Peak alpha at the crest line. Kept well under 1 so the crests stay as light passing over
     # the desktop, with dark water between them, rather than covering it.
     intensity: float = 1.1
+    # Crest colours, derived from the default accent so that `WaveStyle()` matches what an
+    # empty config produces. Only index 0 of each is drawn (see wave.draw_frame); the rest of
+    # a configured list is accepted and ignored.
     halos: tuple[tuple[int, int, int], ...] = field(
-        default_factory=lambda: tuple(rgb(c) for c in DEFAULT_HALOS)
+        default_factory=lambda: (wave_colors(DEFAULT_ACCENT)[0],)
     )
     cores: tuple[tuple[int, int, int], ...] = field(
-        default_factory=lambda: tuple(rgb(c) for c in DEFAULT_CORES)
+        default_factory=lambda: (wave_colors(DEFAULT_ACCENT)[1],)
     )
 
     def __post_init__(self) -> None:
@@ -134,6 +164,12 @@ class WaveStyle:
     def from_config(cls, cfg) -> "WaveStyle":
         at = "overlay.wave"
         default = cls()
+        # The crests follow the pill's accent unless the config names colours explicitly, so
+        # changing `overlay.accent` recolours the whole activation rather than half of it.
+        # Derived colours are also what an unusable value falls back to, so every recovery
+        # path lands on the accent rather than on a blue from the original design.
+        accent = _color(cfg.get("overlay.accent"), DEFAULT_ACCENT, "overlay.accent")
+        halo, core = wave_colors(accent)
         return cls(
             enabled=_flag(cfg.get(f"{at}.enabled"), default.enabled, f"{at}.enabled"),
             duration_ms=_number(
@@ -171,8 +207,8 @@ class WaveStyle:
             intensity=_number(
                 cfg.get(f"{at}.intensity"), default.intensity, 0, 4, f"{at}.intensity"
             ),
-            halos=_colors(cfg.get(f"{at}.halos"), DEFAULT_HALOS, f"{at}.halos"),
-            cores=_colors(cfg.get(f"{at}.cores"), DEFAULT_CORES, f"{at}.cores"),
+            halos=_colors(cfg.get(f"{at}.halos"), (_hex(halo),), f"{at}.halos"),
+            cores=_colors(cfg.get(f"{at}.cores"), (_hex(core),), f"{at}.cores"),
         )
 
 

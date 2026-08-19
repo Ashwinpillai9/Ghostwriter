@@ -77,8 +77,8 @@ DEFAULTS: dict[str, Any] = {
             "flash_rings": 14,
             "buffer_width": 960,
             "intensity": 1.1,
-            "halos": ["#0c38e8", "#1044ff", "#2464ff", "#1852f6"],
-            "cores": ["#96e0ff", "#38bdf8", "#6ec8ff", "#56cdfc"],
+            # halos/cores are deliberately absent: unset means "derive from overlay.accent",
+            # and a default here would shadow that so the wave never followed the pill.
         },
     },
     "output": {

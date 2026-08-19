@@ -192,3 +192,60 @@ def test_dragging_moves_the_window_not_just_the_pill(pill):
     drag(pill, (0, 0), (500, 400))
     x, y = pill.position
     assert pill.root.geometry().endswith(f"+{x - overlay_module.PAD_X}+{y - overlay_module.PAD_Y}")
+
+
+# --- live restyling ----------------------------------------------------------
+#
+# apply_style is called from whatever thread reloads the config, but the swap may destroy and
+# rebuild the wave's Toplevel, so it has to land on the Tk thread. These drive the collection
+# point directly rather than spinning the real loop.
+
+
+def test_apply_style_does_nothing_until_the_tick_collects_it(pill):
+    from ghostwriter.style import OverlayStyle
+
+    pill.apply_style(OverlayStyle(accent="#a855f7"))
+    assert pill.accent != "#a855f7", "the swap must wait for the Tk thread"
+    pill._absorb_style()
+    assert pill.accent == "#a855f7"
+    assert pill.style.accent == "#a855f7"
+
+
+def test_restyling_invalidates_the_warmed_chrome_plan(pill):
+    from ghostwriter.style import OverlayStyle
+
+    pill.warm(budget=1)
+    assert pill._warm_todo is not None
+    pill.apply_style(OverlayStyle(accent="#22c55e"))
+    pill._absorb_style()
+    assert pill._warm_todo is None, "cached chrome is keyed by colour, so it is now stale"
+
+
+def test_disabling_the_wave_tears_its_window_down(pill):
+    from ghostwriter.style import OverlayStyle, WaveStyle
+
+    if pill.wave is None:
+        pytest.skip("no wave overlay")
+    pill.apply_style(OverlayStyle(wave=WaveStyle(enabled=False)))
+    pill._absorb_style()
+    assert pill.wave is None
+
+
+def test_re_enabling_the_wave_builds_it_again(pill):
+    from ghostwriter.style import OverlayStyle, WaveStyle
+
+    pill.apply_style(OverlayStyle(wave=WaveStyle(enabled=False)))
+    pill._absorb_style()
+    assert pill.wave is None
+    pill.apply_style(OverlayStyle(wave=WaveStyle(enabled=True)))
+    pill._absorb_style()
+    assert pill.wave is not None
+
+
+def test_an_unchanged_wave_style_keeps_the_same_window(pill):
+    if pill.wave is None:
+        pytest.skip("no wave overlay")
+    before = pill.wave
+    pill.apply_style(overlay_module.OverlayStyle(accent="#ef4444"))
+    pill._absorb_style()
+    assert pill.wave is before, "only a wave change should rebuild the wave window"

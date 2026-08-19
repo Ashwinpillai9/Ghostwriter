@@ -46,6 +46,22 @@ hotkeys, the microphone or the overlay.
 
 ## Things that bite
 
+- **`App.reload_config` is the single apply path for a settings change.** The tray's reload item
+  and any settings UI both go through it, so "what does changing this actually do" is answered
+  in one place and is testable without a UI (`tests/test_reload.py`). It works because the hot
+  paths read config values fresh per call rather than snapshotting them, so applying a change is
+  usually just assignment. Adding a setting means teaching `_apply_*` about it — otherwise it
+  silently needs a restart. Genuinely restart-only keys are listed in `App.RESTART_ONLY` and
+  reported back to the caller rather than applied.
+- **A save must settle before it is applied.** `watcher.py` polls `config.toml`'s (mtime, size)
+  and waits for it to stop changing, because editors do not write a file in one step — several
+  truncate then write, others write a temp file and rename over the original. Reloading on the
+  first change reads a half-written file and reports a syntax error for something typed
+  correctly. The same window collapses an editor that autosaves per keystroke into one reload.
+- **`Overlay.apply_style` must land on the Tk thread.** It can destroy and rebuild the wave's
+  Toplevel, so a swap is parked in `_pending_style` and collected by the next tick, the same way
+  status updates go through `events`. Calling it from a worker thread is safe; mutating
+  `overlay.style` directly is not.
 - **Tk draws none of the pill.** Frames are composed with Pillow (`ghostwriter/pill.py`) and
   pushed via `UpdateLayeredWindow`; Tk only supplies the window, the loop and the input. The
   bitmap must be premultiplied BGRA (`tobytes("raw", "BGRa")`) or every antialiased edge picks
