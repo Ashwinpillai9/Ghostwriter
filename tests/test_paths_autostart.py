@@ -5,9 +5,14 @@ the three most likely to drift. Everything here stubs the operating system: no t
 registered, nothing is downloaded, and no GPU is required.
 """
 
+import hashlib
+import io
+import json
 import subprocess
+import zipfile
 
 import pytest
+from packaging.requirements import Requirement
 
 from ghostwriter import autostart, bootstrap, paths
 
@@ -178,6 +183,105 @@ def test_a_cpu_configuration_never_fetches_cuda(as_frozen, monkeypatch):
 
     bootstrap.run("tiny.en", "cpu")
     assert fetched == []
+
+
+# --- fetching the CUDA runtime directly from PyPI ----------------------------
+#
+# A frozen build has no pip and no standalone python.exe: `sys.executable` is Ghostwriter.exe
+# itself. Running that with pip-style arguments doesn't invoke pip — it relaunches the whole
+# app, which re-enters this same code and launches another copy, forever. These tests pin
+# fetch_cuda to never shell out at all.
+
+
+def _fake_pypi_response(name: str, versions: dict[str, list[str]]) -> bytes:
+    """A minimal PyPI JSON payload: {version: [wheel filenames]}."""
+    releases = {
+        version: [{"filename": filename, "url": f"https://files/{filename}",
+                   "digests": {"sha256": ""}} for filename in filenames]
+        for version, filenames in versions.items()
+    }
+    return json.dumps({"releases": releases}).encode("utf-8")
+
+
+def test_fetch_cuda_never_shells_out(as_frozen, monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen",
+                         lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+
+    assert bootstrap.fetch_cuda() is False
+    assert calls == [], "fetch_cuda must never run a subprocess — see module docstring"
+
+
+def test_best_wheel_picks_the_highest_matching_windows_wheel(monkeypatch):
+    payload = _fake_pypi_response("nvidia-cublas-cu12", {
+        "12.8.0": ["nvidia_cublas_cu12-12.8.0-py3-none-win_amd64.whl"],
+        "12.9.1": ["nvidia_cublas_cu12-12.9.1-py3-none-win_amd64.whl",
+                   "nvidia_cublas_cu12-12.9.1-py3-none-manylinux2014_x86_64.whl"],
+        "12.1.0": ["nvidia_cublas_cu12-12.1.0-py3-none-win_amd64.whl"],  # below the specifier
+    })
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen",
+                         lambda *a, **k: io.BytesIO(payload))
+
+    requirement = Requirement("nvidia-cublas-cu12>=12.8")
+    found = bootstrap._best_wheel(requirement.name, requirement.specifier)
+    assert found["filename"] == "nvidia_cublas_cu12-12.9.1-py3-none-win_amd64.whl"
+
+
+def test_best_wheel_returns_none_without_a_windows_wheel(monkeypatch):
+    payload = _fake_pypi_response("nvidia-cublas-cu12", {
+        "12.9.1": ["nvidia_cublas_cu12-12.9.1-py3-none-manylinux2014_x86_64.whl"],
+    })
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen",
+                         lambda *a, **k: io.BytesIO(payload))
+
+    requirement = Requirement("nvidia-cublas-cu12>=12.8")
+    assert bootstrap._best_wheel(requirement.name, requirement.specifier) is None
+
+
+def test_best_wheel_handles_a_network_failure(monkeypatch):
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen",
+                         lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+    assert bootstrap._best_wheel("nvidia-cublas-cu12", Requirement("x>=1").specifier) is None
+
+
+def _wheel_bytes(member_name: str, content: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(member_name, content)
+    return buffer.getvalue()
+
+
+def test_fetch_wheel_extracts_into_target(tmp_path, monkeypatch):
+    content = b"not really a dll"
+    wheel = _wheel_bytes("nvidia/cublas/lib/cublas.dll", content)
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen",
+                         lambda *a, **k: io.BytesIO(wheel))
+
+    file_info = {"filename": "nvidia_cublas_cu12-1.0-py3-none-win_amd64.whl",
+                 "url": "https://files/x.whl",
+                 "digests": {"sha256": hashlib.sha256(wheel).hexdigest()}}
+    assert bootstrap._fetch_wheel(file_info, tmp_path) is True
+    assert (tmp_path / "nvidia" / "cublas" / "lib" / "cublas.dll").read_bytes() == content
+    assert not list(tmp_path.glob("*.part"))   # the staging file is cleaned up
+
+
+def test_fetch_wheel_rejects_a_checksum_mismatch(tmp_path, monkeypatch):
+    wheel = _wheel_bytes("nvidia/cublas/lib/cublas.dll", b"data")
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen",
+                         lambda *a, **k: io.BytesIO(wheel))
+
+    file_info = {"filename": "nvidia_cublas_cu12-1.0-py3-none-win_amd64.whl",
+                 "url": "https://files/x.whl",
+                 "digests": {"sha256": "0" * 64}}
+    assert bootstrap._fetch_wheel(file_info, tmp_path) is False
+    assert not (tmp_path / "nvidia").exists()
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_fetch_cuda_reports_failure_without_raising(as_frozen, monkeypatch):
+    monkeypatch.setattr(bootstrap, "_best_wheel", lambda *a, **k: None)
+    assert bootstrap.fetch_cuda() is False
 
 
 def test_a_failed_model_fetch_is_reported_not_raised(as_frozen, monkeypatch):

@@ -19,6 +19,9 @@ dependencies = [
     # CTranslate2 links against cuBLAS/cuDNN at runtime but does not bundle them.
     "nvidia-cublas-cu12>=12.8",
     "nvidia-cudnn-cu12>=9.7,<10",
+    # Resolves the CUDA wheels bootstrap.py fetches directly from PyPI on first run, since a
+    # frozen build has no pip to do it for us.
+    "packaging>=23",
 ]
 
 [project.optional-dependencies]

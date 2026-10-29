@@ -13,13 +13,20 @@ start — reinstalling should never be the remedy for a bad network moment.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
+
+from packaging.requirements import Requirement
+from packaging.version import InvalidVersion, Version
 
 from . import paths
 
@@ -27,6 +34,8 @@ log = logging.getLogger(__name__)
 
 # Kept in step with pyproject.toml: the same runtime the source install pins.
 CUDA_PACKAGES = ("nvidia-cublas-cu12>=12.8", "nvidia-cudnn-cu12>=9.7,<10")
+
+_PYPI_JSON = "https://pypi.org/pypi/{name}/json"
 
 Progress = Callable[[str], None]
 
@@ -99,6 +108,76 @@ def cuda_present() -> bool:
     return root.is_dir() and any(root.rglob("*.dll"))
 
 
+def _best_wheel(name: str, specifier) -> dict | None:
+    """The newest PyPI release of `name` matching `specifier` that ships a Windows wheel."""
+    try:
+        with urllib.request.urlopen(_PYPI_JSON.format(name=name), timeout=30) as resp:  # noqa: S310
+            meta = json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        log.warning("could not reach PyPI for %s: %s", name, exc)
+        return None
+
+    best_version, best_files = None, None
+    for version_str, files in meta.get("releases", {}).items():
+        if not files:
+            continue
+        try:
+            version = Version(version_str)
+        except InvalidVersion:
+            continue
+        if version not in specifier:
+            continue
+        if best_version is None or version > best_version:
+            best_version, best_files = version, files
+
+    for file_info in best_files or []:
+        filename = file_info.get("filename", "")
+        if filename.endswith(".whl") and "win_amd64" in filename:
+            return file_info
+    return None
+
+
+def _fetch_wheel(file_info: dict, target: Path) -> bool:
+    """Download one wheel and unpack it into `target`, the way `pip install --target` would.
+
+    A wheel's layout already mirrors site-packages (the package directories plus its
+    `.dist-info`), so extracting the archive directly reproduces a `--target` install without
+    needing pip or a real `python.exe` — neither of which a frozen build has: `sys.executable`
+    there is `Ghostwriter.exe` itself, and running that with arbitrary arguments just relaunches
+    the app instead of a package manager.
+    """
+    url = file_info["url"]
+    expected_sha256 = file_info.get("digests", {}).get("sha256")
+    tmp_path = target / f".{file_info['filename']}.part"
+    try:
+        with urllib.request.urlopen(url, timeout=1800) as resp, tmp_path.open("wb") as fh:  # noqa: S310
+            shutil.copyfileobj(resp, fh)
+    except (OSError, urllib.error.URLError) as exc:
+        log.warning("could not download %s: %s", url, exc)
+        tmp_path.unlink(missing_ok=True)
+        return False
+
+    if expected_sha256:
+        digest = hashlib.sha256()
+        with tmp_path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_sha256:
+            log.warning("checksum mismatch for %s", url)
+            tmp_path.unlink(missing_ok=True)
+            return False
+
+    try:
+        with zipfile.ZipFile(tmp_path) as archive:
+            archive.extractall(target)
+    except (OSError, zipfile.BadZipFile) as exc:
+        log.warning("could not unpack %s: %s", url, exc)
+        return False
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return True
+
+
 def fetch_cuda(on_progress: Progress | None = None) -> bool:
     """Download the CUDA runtime into the per-user runtime directory.
 
@@ -110,20 +189,16 @@ def fetch_cuda(on_progress: Progress | None = None) -> bool:
     target.mkdir(parents=True, exist_ok=True)
 
     say("Fetching GPU support…")
-    try:
-        result = subprocess.run(  # noqa: S603 - fixed arguments, no shell
-            [sys.executable, "-m", "pip", "install", "--no-deps", "--upgrade",
-             "--target", str(target), *CUDA_PACKAGES],
-            capture_output=True, text=True, timeout=1800,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        log.warning("could not fetch the CUDA runtime: %s", exc)
-        say("Could not fetch GPU support — using the processor")
-        return False
+    for package in CUDA_PACKAGES:
+        requirement = Requirement(package)
+        file_info = _best_wheel(requirement.name, requirement.specifier)
+        if file_info is None or not _fetch_wheel(file_info, target):
+            log.warning("could not fetch %s", package)
+            say("Could not fetch GPU support — using the processor")
+            return False
 
-    if result.returncode != 0 or not cuda_present():
-        log.warning("CUDA fetch failed: %s", (result.stderr or "")[:400])
+    if not cuda_present():
+        log.warning("CUDA fetch finished but no runtime DLLs were found under %s", target)
         say("Could not fetch GPU support — using the processor")
         return False
 
