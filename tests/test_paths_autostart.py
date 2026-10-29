@@ -5,6 +5,7 @@ the three most likely to drift. Everything here stubs the operating system: no t
 registered, nothing is downloaded, and no GPU is required.
 """
 
+import ctypes
 import hashlib
 import io
 import json
@@ -86,7 +87,7 @@ def test_auto_start_is_unavailable_from_source():
 
 def test_enabling_from_source_is_refused_not_attempted(monkeypatch):
     called = []
-    monkeypatch.setattr(autostart, "_run", lambda args: called.append(args) or Result())
+    monkeypatch.setattr(autostart, "_run_elevated", lambda args: called.append(args))
     ok, message = autostart.enable()
     assert ok is False
     assert called == [], "must not touch Task Scheduler when it cannot work"
@@ -98,9 +99,9 @@ def test_enabling_registers_a_logon_task_with_highest_privileges(as_frozen, monk
 
     def record(args):
         seen["args"] = args
-        return Result()
+        return autostart._ElevatedResult(declined=False, returncode=0)
 
-    monkeypatch.setattr(autostart, "_run", record)
+    monkeypatch.setattr(autostart, "_run_elevated", record)
 
     ok, message = autostart.enable()
     assert ok is True and message == ""
@@ -114,7 +115,9 @@ def test_enabling_registers_a_logon_task_with_highest_privileges(as_frozen, monk
 
 
 def test_declined_elevation_is_reported_not_raised(as_frozen, monkeypatch):
-    monkeypatch.setattr(autostart, "_run", lambda args: Result(returncode=740, stderr="Access is denied"))
+    # What ShellExecuteExW reports when the user dismisses the UAC prompt itself.
+    monkeypatch.setattr(autostart, "_run_elevated",
+                         lambda args: autostart._ElevatedResult(declined=True, returncode=None))
     ok, message = autostart.enable()
     assert ok is False
     assert "administrator" in message.lower()
@@ -124,6 +127,7 @@ def test_a_missing_schtasks_does_not_raise(as_frozen, monkeypatch):
     def explode(_args):
         raise OSError("schtasks not found")
 
+    monkeypatch.setattr(autostart, "_run_elevated", explode)
     monkeypatch.setattr(autostart, "_run", explode)
     assert autostart.enable()[0] is False
     assert autostart.is_enabled() is False
@@ -149,6 +153,54 @@ def test_state_reports_everything_the_control_needs(as_frozen, monkeypatch):
     state = autostart.state()
     assert set(state) == {"available", "enabled", "reason", "target"}
     assert state["available"] is True and state["enabled"] is True
+
+
+# --- the UAC elevation itself -------------------------------------------------
+#
+# `schtasks.exe` has no manifest asking Windows to elevate it, so a plain subprocess call is
+# just refused — without ever showing the user a prompt. These exercise the ShellExecuteExW
+# plumbing in `_run_elevated` that actually raises one.
+
+
+def test_run_elevated_waits_and_reports_the_real_exit_code(monkeypatch):
+    def fake_shell_execute(info_ptr):
+        info_ptr.contents.hProcess = 4242
+        return 1
+
+    def fake_exit_code(_handle, code_ptr):
+        code_ptr.contents.value = 0
+        return 1
+
+    closed = []
+    monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", fake_shell_execute)
+    monkeypatch.setattr(ctypes.windll.kernel32, "WaitForSingleObject", lambda *a: 0)
+    monkeypatch.setattr(ctypes.windll.kernel32, "GetExitCodeProcess", fake_exit_code)
+    monkeypatch.setattr(ctypes.windll.kernel32, "CloseHandle",
+                         lambda handle: closed.append(handle) or 1)
+
+    result = autostart._run_elevated(["/query", "/tn", "Ghostwriter"])
+    assert result.declined is False
+    assert result.returncode == 0
+    assert closed == [4242], "the process handle must be released"
+
+
+def test_run_elevated_detects_a_declined_uac_prompt(monkeypatch):
+    monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", lambda info_ptr: 0)
+    monkeypatch.setattr(ctypes.windll.kernel32, "GetLastError",
+                         lambda: autostart._ERROR_CANCELLED)
+
+    result = autostart._run_elevated(["/create"])
+    assert result.declined is True
+    assert result.returncode is None
+
+
+def test_run_elevated_distinguishes_other_launch_failures(monkeypatch):
+    monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteExW", lambda info_ptr: 0)
+    monkeypatch.setattr(ctypes.windll.kernel32, "GetLastError", lambda: 2)  # file not found
+
+    result = autostart._run_elevated(["/create"])
+    assert result.declined is False
+    assert result.returncode is None
 
 
 # --- bootstrap ---------------------------------------------------------------
