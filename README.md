@@ -7,27 +7,53 @@ which is what makes it useful for CLI tools and coding agents.
 Nothing leaves the machine and there is no API key: transcription runs on `faster-whisper`
 locally.
 
-## Setup
+## Install
+
+```powershell
+irm https://raw.githubusercontent.com/Ashwinpillai9/Ghostwriter/main/install.ps1 | iex
+```
+
+No Python needed. That fetches the latest release (~180 MB), installs it to
+`%LOCALAPPDATA%\Ghostwriter`, adds a Start Menu entry, and sets it to start when you log in.
+
+Re-run the same command to update; `-Uninstall` removes it.
+
+**First run downloads what your machine can use** — the speech model (~1.6 GB), and GPU support
+if you have an NVIDIA card. The pill above your taskbar shows progress. It happens once, and no
+NVIDIA card just means transcription runs on the processor.
+
+> The build is not code-signed, so Windows will show "Windows protected your PC" the first time.
+> **More info → Run anyway.**
+
+A tray icon appears; the status pill shows above the taskbar while recording.
+
+### Other ways
+
+```powershell
+uv tool install git+https://github.com/Ashwinpillai9/Ghostwriter   # if you already have uv
+```
+
+To run from a checkout instead:
 
 ```powershell
 uv python install 3.12
 uv venv --python 3.12
 uv pip install -e .
+.\run.ps1
 ```
 
-First run downloads the Whisper model (~1.6 GB) into the Hugging Face cache.
+Use the launcher rather than `python` directly — it `cd`s into the project first, so it works
+from any drive.
 
-## Run
+## Starting with Windows
 
-```powershell
-D:\Projects\Ghostwriter\run.ps1    # PowerShell
-D:\Projects\Ghostwriter\run.cmd    # cmd.exe
-```
+An installed copy registers a logon task and starts with Windows. The **Start with Windows** row
+on the Settings window's Keys tab turns it off and on.
 
-Run one of the launchers rather than `python` directly — they `cd` into the project first, so
-they work from any drive.
-
-A tray icon appears; the status pill shows above the taskbar while recording.
+It runs with elevated privileges deliberately. Windows does not deliver input to a
+lower-privilege process, so without that the hotkeys would go dead whenever an administrator
+window had focus — an admin terminal, Task Manager. This is why it is a scheduled task rather
+than a Startup shortcut.
 
 ## Models
 
@@ -193,7 +219,8 @@ hidden start.
 ## Troubleshooting
 
 - **Hotkeys do nothing in an elevated window.** Windows blocks input from a lower-privilege
-  process. Run Ghostwriter as administrator too.
+  process. An installed copy started by its logon task already runs elevated and is unaffected —
+  turn on **Start with Windows** in Settings, or launch Ghostwriter as administrator yourself.
 - **A key stops working in other apps while Ghostwriter runs.** Bound keys are suppressed by
   default. Set `hotkeys.suppress = false` to hand them back, or rebind the clashing key.
 - **First dictation is slow.** Model load takes a few seconds; recordings made before it

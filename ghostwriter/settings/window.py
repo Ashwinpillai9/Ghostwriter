@@ -29,7 +29,9 @@ def open_window(config_path: Path | None = None) -> None:
     """Open the settings window and block until it closes."""
     import webview
 
-    path = config_path or config_module.default_config_path()
+    # The window may be opened before Ghostwriter has ever run, so it cannot assume the file
+    # is there — and an empty editor over a missing file would be a poor first impression.
+    path = config_module.ensure_exists(config_path or config_module.default_config_path())
     bridge = Bridge(ConfigStore(path))
 
     webview.create_window(
